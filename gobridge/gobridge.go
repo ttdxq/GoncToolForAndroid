@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/threatexpert/gonc/v2/apps"
 	"github.com/threatexpert/gonc/v2/misc"
@@ -21,8 +23,20 @@ type Logger interface {
 	Log(message string)
 }
 
+type StatusListener interface {
+	OnStatusChanged(status string)
+}
+
 var androidLogger Logger
-var goncCancel context.CancelFunc
+var androidStatusListener StatusListener
+
+type goncSession struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+var goncSessionMu sync.Mutex
+var currentGoncSession *goncSession
 
 // SetLogger sets the logger for Android
 func SetLogger(l Logger) {
@@ -40,6 +54,10 @@ func SetLogger(l Logger) {
 			}
 		}
 	}()
+}
+
+func SetStatusListener(l StatusListener) {
+	androidStatusListener = l
 }
 
 // LogWriter implements io.Writer to forward logs to Android
@@ -64,9 +82,25 @@ func StartGonc(args string) {
 		}
 	}()
 
+	StopGonc()
+
 	// Create context for cancellation
 	ctx, cancel := context.WithCancel(context.Background())
-	goncCancel = cancel
+	session := &goncSession{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	goncSessionMu.Lock()
+	currentGoncSession = session
+	goncSessionMu.Unlock()
+	defer func() {
+		goncSessionMu.Lock()
+		if currentGoncSession == session {
+			currentGoncSession = nil
+		}
+		goncSessionMu.Unlock()
+		close(session.done)
+	}()
 
 	argSlice := strings.Split(args, " ")
 	// Filter empty strings if any
@@ -93,17 +127,34 @@ func StartGonc(args string) {
 		return
 	}
 	config.ConsoleMode = true
+	config.Ctx = ctx
 	config.GlobalCtx = ctx
+	config.Callback_OnSessionReady = func() {
+		if androidStatusListener != nil {
+			androidStatusListener.OnStatusChanged("connected")
+		}
+	}
 
 	apps.App_Netcat_main_withconfig(console, config)
 }
 
 // StopGonc stops the gonc execution.
 func StopGonc() {
-	if goncCancel != nil {
-		goncCancel()
-		// goncCancel = nil // Keep it until next Start?
-		// Better to leave it, StartGonc overwrites it.
+	goncSessionMu.Lock()
+	session := currentGoncSession
+	goncSessionMu.Unlock()
+	if session == nil {
+		return
+	}
+
+	session.cancel()
+
+	select {
+	case <-session.done:
+	case <-time.After(5 * time.Second):
+		if androidLogger != nil {
+			androidLogger.Log("StopGonc timed out waiting for gonc shutdown")
+		}
 	}
 }
 
