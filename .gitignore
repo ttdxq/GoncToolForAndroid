@@ -1,12 +1,7 @@
 *.iml
 .gradle
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+/.idea/
 .DS_Store
 /build
 /captures
@@ -18,9 +13,10 @@ local.properties
 *.aar
 *.jar
 /app/src/main/jniLibs/
-/app/libs/goncvpn.aar
 /app/libs/goncvpn-sources.jar
 *.apk
 /app/build/
 /app/release/
 /app/debug/
+
+!/app/libs/goncvpn.aar
