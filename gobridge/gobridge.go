@@ -107,8 +107,8 @@ func StartGonc(args string) {
 	var cleanArgs []string
 	// cleanArgs = append(cleanArgs, "gonc") // argv0 is handled by AppNetcatConfigByArgs? No, typically args[0] is progname.
 	// Check apps.nc usage. Main calls it with os.Args[1:].
-	// App_Netcat_main calls AppNetcatConfigByArgs("gonc", args).
-	// usage: config, err := AppNetcatConfigByArgs("gonc", args)
+	// App_Netcat_main calls AppNetcatConfigByArgs(logWriter, "gonc", args).
+	// usage: config, err := AppNetcatConfigByArgs(logWriter, "gonc", args)
 
 	for _, arg := range argSlice {
 		if strings.TrimSpace(arg) != "" {
@@ -119,7 +119,7 @@ func StartGonc(args string) {
 	console := &misc.ConsoleIO{}
 
 	// Manually parse args and run to inject context
-	config, err := apps.AppNetcatConfigByArgs("gonc", cleanArgs)
+	config, err := apps.AppNetcatConfigByArgs(console, "gonc", cleanArgs)
 	if err != nil {
 		if androidLogger != nil {
 			androidLogger.Log(fmt.Sprintf("Error parsing gonc args: %v", err))
