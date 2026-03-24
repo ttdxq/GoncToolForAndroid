@@ -1,7 +1,42 @@
+import java.util.zip.ZipFile
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+val verifyGoncvpnAar by tasks.registering {
+    group = "verification"
+    description = "Verifies that app/libs/goncvpn.aar contains the expected generated gobridge APIs."
+
+    val aarFile = layout.projectDirectory.file("libs/goncvpn.aar").asFile
+    inputs.file(aarFile)
+
+    doLast {
+        require(aarFile.exists()) {
+            "Missing ${aarFile.path}. Rebuild gobridge AAR before packaging the app."
+        }
+
+        ZipFile(aarFile).use { aarZip ->
+            val classesEntry = aarZip.getEntry("classes.jar")
+                ?: error("${aarFile.path} does not contain classes.jar")
+
+            val jarBytes = aarZip.getInputStream(classesEntry).readBytes()
+            val tempJar = temporaryDir.resolve("classes.jar")
+            tempJar.writeBytes(jarBytes)
+
+            ZipFile(tempJar).use { classesZip ->
+                require(classesZip.getEntry("gobridge/StatusListener.class") != null) {
+                    buildString {
+                        append("Stale ${aarFile.path}: gobridge/StatusListener.class is missing. ")
+                        append("Android Studio is packaging an outdated goncvpn.aar. ")
+                        append("Rebuild app/libs/goncvpn.aar from the current gobridge sources before assembling the APK.")
+                    }
+                }
+            }
+        }
+    }
 }
 
 android {
@@ -14,8 +49,8 @@ android {
         applicationId = "cyou.ttdxq.goncvpn.android"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 11
+        versionName = "0.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -41,8 +76,15 @@ android {
         jvmTarget = "11"
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
+    buildToolsVersion = "36.1.0"
+    ndkVersion = "29.0.14206865"
+}
+
+tasks.named("preBuild") {
+    dependsOn(verifyGoncvpnAar)
 }
 
 dependencies {
