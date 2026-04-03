@@ -4,12 +4,14 @@ import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
 import android.os.Bundle
+import android.os.Build
+import android.util.Patterns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,7 +31,6 @@ import cyou.ttdxq.goncvpn.android.util.CidrValidator
 import cyou.ttdxq.goncvpn.android.util.CidrValidationResult
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.firstOrNull
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -78,10 +79,19 @@ class MainActivity : ComponentActivity() {
             // Use first() to get current value once, instead of collect() which keeps listening
             val p2pSecret = settingsStore.p2pSecret.firstOrNull() ?: ""
             val routeCidrs = settingsStore.routeCidrs.firstOrNull() ?: ""
+            val useCustomDns = settingsStore.useCustomDns.firstOrNull() ?: false
+            val customDnsAddress = settingsStore.customDnsAddress.firstOrNull() ?: ""
+            val dnsThroughTunnel = settingsStore.dnsThroughTunnel.firstOrNull() ?: true
+            val linkGoncDns = settingsStore.linkGoncDns.firstOrNull() ?: false
 
             // 验证P2P Secret
             if (p2pSecret.isBlank()) {
                 Toast.makeText(this@MainActivity, "P2P Secret不能为空", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            if (useCustomDns && !isValidDnsAddress(customDnsAddress)) {
+                Toast.makeText(this@MainActivity, "DNS 地址无效", Toast.LENGTH_LONG).show()
                 return@launch
             }
             
@@ -96,6 +106,10 @@ class MainActivity : ComponentActivity() {
                 action = GoncVpnService.ACTION_START
                 putExtra(GoncVpnService.EXTRA_P2P_SECRET, p2pSecret)
                 putExtra(GoncVpnService.EXTRA_ROUTE_CIDRS, routeCidrs)
+                putExtra(GoncVpnService.EXTRA_USE_CUSTOM_DNS, useCustomDns)
+                putExtra(GoncVpnService.EXTRA_CUSTOM_DNS_ADDRESS, customDnsAddress)
+                putExtra(GoncVpnService.EXTRA_DNS_THROUGH_TUNNEL, dnsThroughTunnel)
+                putExtra(GoncVpnService.EXTRA_LINK_GONC_DNS, linkGoncDns)
             }
             try {
                 // In Android 12+, we must catch potential exceptions if startForegroundService 
@@ -113,6 +127,11 @@ class MainActivity : ComponentActivity() {
             action = GoncVpnService.ACTION_STOP
         }
         startService(intent)
+    }
+
+    private fun isValidDnsAddress(address: String): Boolean {
+        val normalized = address.trim().removePrefix("[").removeSuffix("]")
+        return normalized.isNotBlank() && Patterns.IP_ADDRESS.matcher(normalized).matches()
     }
 }
 
@@ -174,11 +193,16 @@ fun StatusCard(status: VpnStatus, errorMessage: String?) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VpnControlScreen(settingsStore: SettingsStore, onStartVpn: () -> Unit, onStopVpn: () -> Unit) {
     val scope = rememberCoroutineScope()
     val p2pSecret by settingsStore.p2pSecret.collectAsState(initial = "")
     val routeCidrs by settingsStore.routeCidrs.collectAsState(initial = "")
+    val useCustomDns by settingsStore.useCustomDns.collectAsState(initial = false)
+    val customDnsAddress by settingsStore.customDnsAddress.collectAsState(initial = "")
+    val dnsThroughTunnel by settingsStore.dnsThroughTunnel.collectAsState(initial = true)
+    val linkGoncDns by settingsStore.linkGoncDns.collectAsState(initial = false)
     val logs = remember { mutableStateListOf<String>() }
     val vpnStatus by VpnState.status.collectAsState()
     val errorMessage by VpnState.errorMessage.collectAsState()
@@ -193,6 +217,7 @@ fun VpnControlScreen(settingsStore: SettingsStore, onStartVpn: () -> Unit, onSto
     var secretInput by remember { mutableStateOf(p2pSecret) }
     var cidrsInput by remember { mutableStateOf(routeCidrs) }
     var cidrValidationError by remember { mutableStateOf<String?>(null) }
+    var showDnsDialog by remember { mutableStateOf(false) }
     
     // Update local state when flow emits new values (initial load)
     LaunchedEffect(p2pSecret) { if (secretInput.isBlank()) secretInput = p2pSecret }
@@ -218,86 +243,269 @@ fun VpnControlScreen(settingsStore: SettingsStore, onStartVpn: () -> Unit, onSto
                          secretInput.isNotBlank()
     val isStopEnabled = vpnStatus == VpnStatus.CONNECTED || vpnStatus == VpnStatus.CONNECTING || vpnStatus == VpnStatus.STOPPING
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Status Card
-        StatusCard(vpnStatus, errorMessage)
-        
-        Text("Gonc VPN", style = MaterialTheme.typography.headlineMedium)
-
-        OutlinedTextField(
-            value = secretInput,
-            onValueChange = { 
-                secretInput = it
-                scope.launch { settingsStore.setP2pSecret(it) }
-            },
-            label = { Text("P2P Secret Key") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-
-        OutlinedTextField(
-            value = cidrsInput,
-            onValueChange = { 
-                cidrsInput = it
-                scope.launch { settingsStore.setRouteCidrs(it) }
-            },
-            label = { Text("Route CIDRs (one per line)") },
-            supportingText = {
-                Column {
-                    Text("例如: 0.0.0.0/0 或 ::/0 表示全局代理")
-                    cidrValidationError?.let { error ->
-                        Text(
-                            text = error,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Gonc VPN") },
+                actions = {
+                    TextButton(onClick = { showDnsDialog = true }) {
+                        Text("DNS")
                     }
                 }
-            },
-            isError = cidrValidationError != null,
-            modifier = Modifier.fillMaxWidth().height(180.dp),
-            maxLines = 10
-        )
-        
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            Button(
-                onClick = onStartVpn,
-                enabled = isStartEnabled,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Start VPN")
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = onStopVpn,
-                enabled = isStopEnabled,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Stop VPN")
-            }
+            )
         }
-        
-        Text("Logs:", style = MaterialTheme.typography.titleMedium)
-        SelectionContainer(modifier = Modifier.weight(1f)) {
-            Column(
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            StatusCard(vpnStatus, errorMessage)
+
+            OutlinedTextField(
+                value = secretInput,
+                onValueChange = {
+                    secretInput = it
+                    scope.launch { settingsStore.setP2pSecret(it) }
+                },
+                label = { Text("P2P Secret Key") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = cidrsInput,
+                onValueChange = {
+                    cidrsInput = it
+                    scope.launch { settingsStore.setRouteCidrs(it) }
+                },
+                label = { Text("Route CIDRs (one per line)") },
+                supportingText = {
+                    Column {
+                        Text("例如: 0.0.0.0/0 或 ::/0 表示全局代理")
+                        cidrValidationError?.let { error ->
+                            Text(
+                                text = error,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                },
+                isError = cidrValidationError != null,
+                modifier = Modifier.fillMaxWidth().height(180.dp),
+                maxLines = 10
+            )
+
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp)
-                    .verticalScroll(rememberScrollState())
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                logs.forEach { log ->
-                    Text(text = log, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
+                Button(
+                    onClick = onStartVpn,
+                    enabled = isStartEnabled,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Start VPN")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onStopVpn,
+                    enabled = isStopEnabled,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Stop VPN")
+                }
+            }
+
+            DnsSettingsSummary(
+                useCustomDns = useCustomDns,
+                customDnsAddress = customDnsAddress,
+                dnsThroughTunnel = dnsThroughTunnel,
+                linkGoncDns = linkGoncDns,
+                onClick = { showDnsDialog = true }
+            )
+
+            Text("Logs:", style = MaterialTheme.typography.titleMedium)
+            SelectionContainer(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    logs.forEach { log ->
+                        Text(text = log, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
+                    }
                 }
             }
         }
+
+        if (showDnsDialog) {
+            DnsSettingsDialog(
+                initialUseCustomDns = useCustomDns,
+                initialDnsAddress = customDnsAddress,
+                initialDnsThroughTunnel = dnsThroughTunnel,
+                initialLinkGoncDns = linkGoncDns,
+                onDismiss = { showDnsDialog = false },
+                onConfirm = { enabled, address, throughTunnel, linkGonc ->
+                    scope.launch {
+                        settingsStore.setUseCustomDns(enabled)
+                        settingsStore.setCustomDnsAddress(address)
+                        settingsStore.setDnsThroughTunnel(throughTunnel)
+                        settingsStore.setLinkGoncDns(linkGonc)
+                    }
+                    showDnsDialog = false
+                }
+            )
+        }
     }
+}
+
+@Composable
+private fun DnsSettingsSummary(
+    useCustomDns: Boolean,
+    customDnsAddress: String,
+    dnsThroughTunnel: Boolean,
+    linkGoncDns: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("DNS 设置", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = if (!useCustomDns) {
+                    "未启用自定义 DNS"
+                } else {
+                    val mode = if (dnsThroughTunnel) "经过隧道" else "不经过隧道"
+                    val goncMode = if (linkGoncDns) "联动 gonc" else "不联动 gonc"
+                    "$customDnsAddress · $mode · $goncMode"
+                },
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+}
+
+@Composable
+private fun DnsSettingsDialog(
+    initialUseCustomDns: Boolean,
+    initialDnsAddress: String,
+    initialDnsThroughTunnel: Boolean,
+    initialLinkGoncDns: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (Boolean, String, Boolean, Boolean) -> Unit
+) {
+    var useCustomDns by remember(initialUseCustomDns) { mutableStateOf(initialUseCustomDns) }
+    var dnsAddress by remember(initialDnsAddress) { mutableStateOf(initialDnsAddress) }
+    var dnsThroughTunnel by remember(initialDnsThroughTunnel) { mutableStateOf(initialDnsThroughTunnel) }
+    var linkGoncDns by remember(initialLinkGoncDns) { mutableStateOf(initialLinkGoncDns) }
+    val canBypassDns = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val dnsValidationError = remember(useCustomDns, dnsAddress) {
+        if (useCustomDns && !isValidDnsAddressInput(dnsAddress)) "请输入有效的 DNS IP 地址" else null
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("DNS 设置") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("使用自定义 DNS")
+                    Switch(checked = useCustomDns, onCheckedChange = { useCustomDns = it })
+                }
+
+                OutlinedTextField(
+                    value = dnsAddress,
+                    onValueChange = { dnsAddress = it },
+                    label = { Text("DNS 地址") },
+                    supportingText = {
+                        Text(dnsValidationError ?: "示例：192.168.0.1 或 2001:4860:4860::8888")
+                    },
+                    isError = dnsValidationError != null,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = useCustomDns,
+                    singleLine = true
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("DNS 经过隧道")
+                        Text(
+                            text = if (canBypassDns) {
+                                "关闭后会尝试让 DNS 服务器地址绕过 VPN"
+                            } else {
+                                "Android 13 以下不支持关闭此选项"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = dnsThroughTunnel,
+                        onCheckedChange = { dnsThroughTunnel = it },
+                        enabled = useCustomDns && canBypassDns
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("联动 gonc -dns")
+                        Text(
+                            text = "让 gonc 自身解析也使用这个 DNS 服务器",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = linkGoncDns,
+                        onCheckedChange = { linkGoncDns = it },
+                        enabled = useCustomDns
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(useCustomDns, dnsAddress.trim(), if (canBypassDns) dnsThroughTunnel else true, linkGoncDns)
+                },
+                enabled = !useCustomDns || dnsValidationError == null
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+private fun isValidDnsAddressInput(address: String): Boolean {
+    val normalized = address.trim().removePrefix("[").removeSuffix("]")
+    return normalized.isNotBlank() && Patterns.IP_ADDRESS.matcher(normalized).matches()
 }

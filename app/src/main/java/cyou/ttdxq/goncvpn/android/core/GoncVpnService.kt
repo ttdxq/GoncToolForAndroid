@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -24,6 +25,7 @@ import kotlinx.coroutines.launch
 import gobridge.Gobridge
 import gobridge.Logger
 import java.lang.reflect.Proxy
+import java.net.InetAddress
 
 class GoncVpnService : VpnService() {
     companion object {
@@ -31,6 +33,10 @@ class GoncVpnService : VpnService() {
         const val ACTION_STOP = "cyou.ttdxq.goncvpn.android.STOP"
         const val EXTRA_P2P_SECRET = "p2p_secret"
         const val EXTRA_ROUTE_CIDRS = "route_cidrs" // Newline separated
+        const val EXTRA_USE_CUSTOM_DNS = "use_custom_dns"
+        const val EXTRA_CUSTOM_DNS_ADDRESS = "custom_dns_address"
+        const val EXTRA_DNS_THROUGH_TUNNEL = "dns_through_tunnel"
+        const val EXTRA_LINK_GONC_DNS = "link_gonc_dns"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonc_vpn_channel"
         private const val TAG = "GoncVpnService"
@@ -93,7 +99,11 @@ class GoncVpnService : VpnService() {
                 startForeground(NOTIFICATION_ID, createNotification("Starting..."))
                 val secret = intent.getStringExtra(EXTRA_P2P_SECRET) ?: ""
                 val cidrs = intent.getStringExtra(EXTRA_ROUTE_CIDRS) ?: ""
-                startVpn(secret, cidrs)
+                val useCustomDns = intent.getBooleanExtra(EXTRA_USE_CUSTOM_DNS, false)
+                val customDnsAddress = intent.getStringExtra(EXTRA_CUSTOM_DNS_ADDRESS) ?: ""
+                val dnsThroughTunnel = intent.getBooleanExtra(EXTRA_DNS_THROUGH_TUNNEL, true)
+                val linkGoncDns = intent.getBooleanExtra(EXTRA_LINK_GONC_DNS, true)
+                startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns)
             }
             ACTION_STOP -> stopVpn()
             else -> {
@@ -104,9 +114,29 @@ class GoncVpnService : VpnService() {
         return START_STICKY
     }
 
-    private fun startVpn(secret: String, cidrs: String) {
+    private fun startVpn(
+        secret: String,
+        cidrs: String,
+        useCustomDns: Boolean,
+        customDnsAddress: String,
+        dnsThroughTunnel: Boolean,
+        linkGoncDns: Boolean
+    ) {
         if (secret.isBlank()) {
             VpnState.setError("P2P Secret不能为空")
+            stopSelf()
+            return
+        }
+
+        val normalizedDns = normalizeDnsAddress(customDnsAddress)
+        if (useCustomDns && normalizedDns == null) {
+            VpnState.setError("DNS 地址无效")
+            stopSelf()
+            return
+        }
+
+        if (useCustomDns && !dnsThroughTunnel && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            VpnState.setError("Android 13 以下系统无法可靠地实现 DNS 绕过隧道")
             stopSelf()
             return
         }
@@ -129,6 +159,21 @@ class GoncVpnService : VpnService() {
                     .addDisallowedApplication(packageName)
                     .setMtu(1400)
                     .setSession("GoncVPN")
+
+                normalizedDns?.let { dnsAddress ->
+                    builder.addDnsServer(dnsAddress)
+                    if (dnsThroughTunnel) {
+                        addRouteForAddress(builder, dnsAddress)
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        builder.excludeRoute(
+                            IpPrefix(
+                                InetAddress.getByName(dnsAddress),
+                                if (dnsAddress.contains(":")) 128 else 32
+                            )
+                        )
+                    }
+                    LogRepository.info(TAG, "Custom DNS enabled: $dnsAddress (throughTunnel=$dnsThroughTunnel)")
+                }
 
                 cidrs.lines().filter { it.isNotBlank() }.forEach { cidr ->
                     try {
@@ -170,7 +215,15 @@ class GoncVpnService : VpnService() {
 
                 // 3. Start Gonc (Blocking, so run in separate thread)
                 // Args: -p2p <SECRET> -link 1080;none
-                val goncArgs = "-p2p $secret -link 1080;none"
+                val goncArgs = buildString {
+                    append("-p2p ")
+                    append(secret)
+                    append(" -link 1080;none")
+                    if (normalizedDns != null && linkGoncDns) {
+                        append(" -dns ")
+                        append(normalizedDns)
+                    }
+                }
                 val worker = Thread {
                     LogRepository.info(TAG, "Starting Gonc...")
                     try {
@@ -272,6 +325,17 @@ class GoncVpnService : VpnService() {
                 stopInProgress = false
             }
         }
+    }
+
+    private fun normalizeDnsAddress(address: String): String? {
+        val trimmed = address.trim().removePrefix("[").removeSuffix("]")
+        if (trimmed.isBlank()) return null
+        return runCatching { InetAddress.getByName(trimmed).hostAddress }
+            .getOrNull()
+    }
+
+    private fun addRouteForAddress(builder: Builder, address: String) {
+        builder.addRoute(address, if (address.contains(":")) 128 else 32)
     }
 
     override fun onDestroy() {
