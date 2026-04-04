@@ -109,7 +109,7 @@ class GoncVpnService : VpnService() {
                 val useCustomDns = intent.getBooleanExtra(EXTRA_USE_CUSTOM_DNS, false)
                 val customDnsAddress = intent.getStringExtra(EXTRA_CUSTOM_DNS_ADDRESS) ?: ""
                 val dnsThroughTunnel = intent.getBooleanExtra(EXTRA_DNS_THROUGH_TUNNEL, true)
-                val linkGoncDns = intent.getBooleanExtra(EXTRA_LINK_GONC_DNS, true)
+                val linkGoncDns = intent.getBooleanExtra(EXTRA_LINK_GONC_DNS, false)
                 startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns)
             }
             ACTION_STOP -> stopVpn()

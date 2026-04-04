@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Bundle
 import android.os.Build
-import android.util.Patterns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,6 +34,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import java.net.InetAddress
 
 class MainActivity : ComponentActivity() {
 
@@ -131,8 +131,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun isValidDnsAddress(address: String): Boolean {
-        val normalized = address.trim().removePrefix("[").removeSuffix("]")
-        return normalized.isNotBlank() && Patterns.IP_ADDRESS.matcher(normalized).matches()
+        return isValidDnsAddressInput(address)
     }
 }
 
@@ -473,5 +472,10 @@ private fun DnsSettingsDialog(
 
 private fun isValidDnsAddressInput(address: String): Boolean {
     val normalized = address.trim().removePrefix("[").removeSuffix("]")
-    return normalized.isNotBlank() && Patterns.IP_ADDRESS.matcher(normalized).matches()
+    if (normalized.isBlank()) return false
+
+    return runCatching { InetAddress.getByName(normalized) }
+        .getOrNull()
+        ?.hostAddress
+        ?.isNotBlank() == true
 }
