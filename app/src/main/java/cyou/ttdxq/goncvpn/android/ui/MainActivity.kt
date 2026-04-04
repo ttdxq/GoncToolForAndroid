@@ -10,9 +10,10 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -248,8 +249,11 @@ fun VpnControlScreen(settingsStore: SettingsStore, onStartVpn: () -> Unit, onSto
             TopAppBar(
                 title = { Text("Gonc VPN") },
                 actions = {
-                    TextButton(onClick = { showDnsDialog = true }) {
-                        Text("DNS")
+                    IconButton(onClick = { showDnsDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "DNS 设置"
+                        )
                     }
                 }
             )
@@ -323,14 +327,6 @@ fun VpnControlScreen(settingsStore: SettingsStore, onStartVpn: () -> Unit, onSto
                 }
             }
 
-            DnsSettingsSummary(
-                useCustomDns = useCustomDns,
-                customDnsAddress = customDnsAddress,
-                dnsThroughTunnel = dnsThroughTunnel,
-                linkGoncDns = linkGoncDns,
-                onClick = { showDnsDialog = true }
-            )
-
             Text("Logs:", style = MaterialTheme.typography.titleMedium)
             SelectionContainer(modifier = Modifier.weight(1f)) {
                 Column(
@@ -362,36 +358,6 @@ fun VpnControlScreen(settingsStore: SettingsStore, onStartVpn: () -> Unit, onSto
                     }
                     showDnsDialog = false
                 }
-            )
-        }
-    }
-}
-
-@Composable
-private fun DnsSettingsSummary(
-    useCustomDns: Boolean,
-    customDnsAddress: String,
-    dnsThroughTunnel: Boolean,
-    linkGoncDns: Boolean,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("DNS 设置", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = if (!useCustomDns) {
-                    "未启用自定义 DNS"
-                } else {
-                    val mode = if (dnsThroughTunnel) "经过隧道" else "不经过隧道"
-                    val goncMode = if (linkGoncDns) "联动 gonc" else "不联动 gonc"
-                    "$customDnsAddress · $mode · $goncMode"
-                },
-                style = MaterialTheme.typography.bodyMedium
             )
         }
     }
