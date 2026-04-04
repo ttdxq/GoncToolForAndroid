@@ -47,6 +47,10 @@ class GoncVpnService : VpnService() {
     @Volatile private var goncThread: Thread? = null
     @Volatile private var stopInProgress = false
     @Volatile private var tunnelReady = false
+    @Volatile private var dnsActivatedAfterTunnel = false
+    @Volatile private var currentRouteCidrs: String = ""
+    @Volatile private var currentCustomDnsAddress: String? = null
+    @Volatile private var currentDnsThroughTunnel: Boolean = true
     
     // JNI Logger implementation
     private val goLogger = object : Logger {
@@ -72,14 +76,17 @@ class GoncVpnService : VpnService() {
             ) { _, method, args ->
                 if (method.name == "onStatusChanged" && args?.isNotEmpty() == true) {
                     val status = args[0] as? String
-                    if (status == "connected") {
-                        serviceScope.launch(Dispatchers.Main) {
-                            if (!stopInProgress && vpnInterface != null) {
-                                tunnelReady = true
-                                updateNotification("Connected")
-                                VpnState.setStatus(VpnStatus.CONNECTED)
-                            }
-                        }
+                     if (status == "connected") {
+                         serviceScope.launch(Dispatchers.Main) {
+                             if (!stopInProgress && vpnInterface != null) {
+                                 tunnelReady = true
+                                 serviceScope.launch(Dispatchers.IO) {
+                                     activateDnsAfterTunnelReadyIfNeeded()
+                                 }
+                                 updateNotification("Connected")
+                                 VpnState.setStatus(VpnStatus.CONNECTED)
+                             }
+                         }
                     }
                 }
                 null
@@ -147,54 +154,17 @@ class GoncVpnService : VpnService() {
         }
 
         tunnelReady = false
+        dnsActivatedAfterTunnel = false
+        currentRouteCidrs = cidrs
+        currentCustomDnsAddress = normalizedDns
+        currentDnsThroughTunnel = dnsThroughTunnel
         
         VpnState.setStatus(VpnStatus.CONNECTING)
 
         serviceScope.launch(Dispatchers.IO) {
             try {
                 // 1. Setup VPN Interface
-                val builder = Builder()
-                    .addAddress("10.0.0.2", 32)
-                    .addAddress("fd00::2", 128)
-                    .addDisallowedApplication(packageName)
-                    .setMtu(1400)
-                    .setSession("GoncVPN")
-
-                normalizedDns?.let { dnsAddress ->
-                    builder.addDnsServer(dnsAddress)
-                    if (dnsThroughTunnel) {
-                        addRouteForAddress(builder, dnsAddress)
-                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        builder.excludeRoute(
-                            IpPrefix(
-                                InetAddress.getByName(dnsAddress),
-                                if (dnsAddress.contains(":")) 128 else 32
-                            )
-                        )
-                    }
-                    LogRepository.info(TAG, "Custom DNS enabled: $dnsAddress (throughTunnel=$dnsThroughTunnel)")
-                }
-
-                cidrs.lines().filter { it.isNotBlank() }.forEach { cidr ->
-                    try {
-                        val parts = cidr.trim().split("/")
-                        val address = parts[0]
-                        val prefixLength = if (parts.size > 1) {
-                            parts[1].toInt()
-                        } else {
-                            if (address.contains(":")) 128 else 32
-                        }
-                        builder.addRoute(address, prefixLength)
-                    } catch (e: Exception) {
-                        val errorMsg = "Invalid route: $cidr"
-                        Log.e(TAG, errorMsg, e)
-                        VpnState.setError(errorMsg)
-                        throw e
-                    }
-                }
-
-                vpnInterface = builder.establish()
-                if (vpnInterface == null) {
+                if (!establishVpnInterface(enableDns = normalizedDns != null && !dnsThroughTunnel)) {
                     val errorMsg = "无法建立VPN接口，请检查VPN权限"
                     Log.e(TAG, errorMsg)
                     VpnState.setError(errorMsg)
@@ -285,6 +255,7 @@ class GoncVpnService : VpnService() {
         }
         stopInProgress = true
         tunnelReady = false
+        dnsActivatedAfterTunnel = false
         VpnState.setStatus(VpnStatus.STOPPING)
         
         serviceScope.launch(Dispatchers.IO) {
@@ -336,6 +307,92 @@ class GoncVpnService : VpnService() {
 
     private fun addRouteForAddress(builder: Builder, address: String) {
         builder.addRoute(address, if (address.contains(":")) 128 else 32)
+    }
+
+    private fun createVpnBuilder(enableDns: Boolean): Builder {
+        val builder = Builder()
+            .addAddress("10.0.0.2", 32)
+            .addAddress("fd00::2", 128)
+            .addDisallowedApplication(packageName)
+            .setMtu(1400)
+            .setSession("GoncVPN")
+
+        currentCustomDnsAddress?.let { dnsAddress ->
+            if (enableDns) {
+                builder.addDnsServer(dnsAddress)
+                if (currentDnsThroughTunnel) {
+                    addRouteForAddress(builder, dnsAddress)
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    builder.excludeRoute(
+                        IpPrefix(
+                            InetAddress.getByName(dnsAddress),
+                            if (dnsAddress.contains(":")) 128 else 32
+                        )
+                    )
+                }
+                LogRepository.info(TAG, "Custom DNS enabled: $dnsAddress (throughTunnel=$currentDnsThroughTunnel)")
+            } else if (currentDnsThroughTunnel) {
+                LogRepository.info(TAG, "Delay custom DNS activation until tunnel is ready: $dnsAddress")
+            }
+        }
+
+        currentRouteCidrs.lines().filter { it.isNotBlank() }.forEach { cidr ->
+            try {
+                val parts = cidr.trim().split("/")
+                val address = parts[0]
+                val prefixLength = if (parts.size > 1) {
+                    parts[1].toInt()
+                } else {
+                    if (address.contains(":")) 128 else 32
+                }
+                builder.addRoute(address, prefixLength)
+            } catch (e: Exception) {
+                val errorMsg = "Invalid route: $cidr"
+                Log.e(TAG, errorMsg, e)
+                VpnState.setError(errorMsg)
+                throw e
+            }
+        }
+
+        return builder
+    }
+
+    private fun establishVpnInterface(enableDns: Boolean): Boolean {
+        val builder = createVpnBuilder(enableDns)
+        val newInterface = builder.establish() ?: return false
+        val oldInterface = vpnInterface
+        vpnInterface = newInterface
+        oldInterface?.close()
+        return true
+    }
+
+    private fun restartTun2Socks() {
+        val fd = vpnInterface?.fd ?: return
+        try {
+            Gobridge.stopTun2Socks()
+        } catch (_: Exception) {
+        }
+        val tunLogLevel = resolveTun2SocksLogLevel()
+        Gobridge.startTun2Socks(fd.toLong(), "socks5://127.0.0.1:1080", "tun0", 1400L, tunLogLevel)
+        LogRepository.info(TAG, "Tun2Socks started with log level: $tunLogLevel")
+    }
+
+    private fun activateDnsAfterTunnelReadyIfNeeded() {
+        val dnsAddress = currentCustomDnsAddress ?: return
+        if (!currentDnsThroughTunnel || dnsActivatedAfterTunnel || stopInProgress || !tunnelReady) {
+            return
+        }
+        synchronized(this) {
+            if (!currentDnsThroughTunnel || dnsActivatedAfterTunnel || stopInProgress || !tunnelReady) {
+                return
+            }
+            if (!establishVpnInterface(enableDns = true)) {
+                throw IllegalStateException("无法在隧道建立后重新配置 DNS")
+            }
+            restartTun2Socks()
+            dnsActivatedAfterTunnel = true
+            LogRepository.info(TAG, "Custom DNS activated after tunnel ready: $dnsAddress")
+        }
     }
 
     override fun onDestroy() {
