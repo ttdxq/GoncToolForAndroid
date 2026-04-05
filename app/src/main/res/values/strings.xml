@@ -44,4 +44,12 @@
     <string name="custom_stun_servers_hint">留空则使用 gonc 默认值。可按文档填写，例如：udp://stun.l.google.com:19302，多个服务器按 gonc 文档格式填写。</string>
     <string name="custom_mqtt_servers_label">自定义 MQTT 服务器</string>
     <string name="custom_mqtt_servers_hint">留空则使用 gonc 默认值。示例：tls://broker.emqx.io:8883，多个服务器按 gonc 文档格式填写。</string>
+    <string name="expert_mode_section_title">专家模式</string>
+    <string name="expert_mode_switch_label">启用专家模式</string>
+    <string name="expert_mode_dialog_title">风险提示</string>
+    <string name="expert_mode_dialog_message">专家模式用于手动输入gonc启动参数，启动vpn使用的是p2p模式，请注意你的参数输入，避免输入p2p模式不可用参数，以防程序崩溃。</string>
+    <string name="expert_mode_dialog_confirm">确认开启</string>
+    <string name="expert_mode_dialog_cancel">取消</string>
+    <string name="expert_mode_raw_args_label">gonc 启动参数</string>
+    <string name="expert_mode_raw_args_hint">输入 gonc 附加启动参数，留空则不使用额外参数</string>
 </resources>
