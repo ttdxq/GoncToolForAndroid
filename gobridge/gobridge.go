@@ -31,8 +31,11 @@ var androidLogger Logger
 var androidStatusListener StatusListener
 
 type goncSession struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel         context.CancelFunc
+	done           chan struct{}
+	shutdownMu     sync.Mutex
+	nextShutdownID uint64
+	shutdowns      map[uint64]func()
 }
 
 var goncSessionMu sync.Mutex
@@ -87,13 +90,17 @@ func StartGonc(args string) {
 	// Create context for cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &goncSession{
-		cancel: cancel,
-		done:   make(chan struct{}),
+		cancel:    cancel,
+		done:      make(chan struct{}),
+		shutdowns: make(map[uint64]func()),
 	}
 	goncSessionMu.Lock()
 	currentGoncSession = session
 	goncSessionMu.Unlock()
 	defer func() {
+		session.shutdownMu.Lock()
+		session.shutdowns = nil
+		session.shutdownMu.Unlock()
 		goncSessionMu.Lock()
 		if currentGoncSession == session {
 			currentGoncSession = nil
@@ -129,6 +136,25 @@ func StartGonc(args string) {
 	config.ConsoleMode = true
 	config.Ctx = ctx
 	config.GlobalCtx = ctx
+	config.Callback_RegisterShutdown = func(closeFunc func()) func() {
+		session.shutdownMu.Lock()
+		if closeFunc == nil {
+			session.shutdownMu.Unlock()
+			return func() {}
+		}
+		id := session.nextShutdownID
+		session.nextShutdownID++
+		session.shutdowns[id] = closeFunc
+		session.shutdownMu.Unlock()
+
+		return func() {
+			session.shutdownMu.Lock()
+			if session.shutdowns != nil {
+				delete(session.shutdowns, id)
+			}
+			session.shutdownMu.Unlock()
+		}
+	}
 	config.Callback_OnSessionReady = func() {
 		if androidStatusListener != nil {
 			androidStatusListener.OnStatusChanged("connected")
@@ -145,6 +171,16 @@ func StopGonc() {
 	goncSessionMu.Unlock()
 	if session == nil {
 		return
+	}
+
+	session.shutdownMu.Lock()
+	shutdowns := make([]func(), 0, len(session.shutdowns))
+	for _, shutdown := range session.shutdowns {
+		shutdowns = append(shutdowns, shutdown)
+	}
+	session.shutdownMu.Unlock()
+	for _, shutdown := range shutdowns {
+		shutdown()
 	}
 
 	session.cancel()
