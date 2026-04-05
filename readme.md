@@ -1,4 +1,4 @@
-# Gonc Tool for Android
+# Gonc Tool For Android
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.20%2B-blue)](https://golang.org)
@@ -42,7 +42,7 @@ graph TD
 
 1.  **拉取源码**:
     ```bash
-    git clone --recursive https://github.com/ttdxq/GoncToolforAndroid.git
+    git clone --recursive https://github.com/ttdxq/GoncToolForAndroid.git
     ```
 
 2.  **编译 Go AAR 库**:
