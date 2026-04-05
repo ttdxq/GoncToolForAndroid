@@ -1,10 +1,10 @@
-# Gonc VPN for Android
+# Gonc Tool for Android
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.20%2B-blue)](https://golang.org)
 [![Android API](https://img.shields.io/badge/API-30%2B-green)](https://developer.android.com)
 
-Gonc VPN 是一款基于 Go 语言核心开发的 Android P2P VPN 客户端。它通过集成 `gonc` 和 `tun2socks` 核心，利用 Android `VpnService` 实现了高性能、低延迟的私有网络加密访问。
+Gonc Tool 是一款基于 Go 语言核心开发的 Android P2P 客户端。它通过集成 `gonc` 和 `tun2socks` 核心，利用 Android `VpnService` 实现了高性能、低延迟的私有网络加密访问。
 
 
 ---
@@ -42,7 +42,7 @@ graph TD
 
 1.  **拉取源码**:
     ```bash
-    git clone --recursive https://github.com/ttdxq/gonc_vpn_on_android.git
+    git clone --recursive https://github.com/ttdxq/GoncToolforAndroid.git
     ```
 
 2.  **编译 Go AAR 库**:
@@ -69,7 +69,7 @@ graph TD
 1.  启动 App。
 2.  输入您的 **P2P Secret Key**。
 3.  配置需要代理的 **CIDR 路由**（例如 `0.0.0.0/0` 为全局代理，`::/0` 为全局 IPv6）。
-4.  点击 **Start VPN** 按钮，授予系統 VPN 权限。
+4.  点击 **启动 VPN** 按钮，授予系统 VPN 权限。
 
 ---
 
