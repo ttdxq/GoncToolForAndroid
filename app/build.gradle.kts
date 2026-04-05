@@ -6,11 +6,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val verifyGoncvpnAar by tasks.registering {
+val verifyGonctoolAar by tasks.registering {
     group = "verification"
-    description = "Verifies that app/libs/goncvpn.aar contains the expected generated gobridge APIs."
+    description = "Verifies that app/libs/gonctool.aar contains the expected generated gobridge APIs."
 
-    val aarFile = layout.projectDirectory.file("libs/goncvpn.aar").asFile
+    val aarFile = layout.projectDirectory.file("libs/gonctool.aar").asFile
     inputs.file(aarFile)
 
     doLast {
@@ -30,8 +30,8 @@ val verifyGoncvpnAar by tasks.registering {
                 require(classesZip.getEntry("gobridge/StatusListener.class") != null) {
                     buildString {
                         append("Stale ${aarFile.path}: gobridge/StatusListener.class is missing. ")
-                        append("Android Studio is packaging an outdated goncvpn.aar. ")
-                        append("Rebuild app/libs/goncvpn.aar from the current gobridge sources before assembling the APK.")
+                        append("Android Studio is packaging an outdated gonctool.aar. ")
+                        append("Rebuild app/libs/gonctool.aar from the current gobridge sources before assembling the APK.")
                     }
                 }
             }
@@ -40,13 +40,13 @@ val verifyGoncvpnAar by tasks.registering {
 }
 
 android {
-    namespace = "cyou.ttdxq.goncvpn.android"
+    namespace = "cyou.ttdxq.gonctool.android"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "cyou.ttdxq.goncvpn.android"
+        applicationId = "cyou.ttdxq.gonctool.android"
         minSdk = 30
         targetSdk = 36
         versionCode = 13
@@ -84,7 +84,7 @@ android {
 }
 
 tasks.named("preBuild") {
-    dependsOn(verifyGoncvpnAar)
+    dependsOn(verifyGonctoolAar)
 }
 
 dependencies {
@@ -105,5 +105,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.google.gson)
     implementation(libs.androidx.datastore.preferences)
-    implementation(files("libs/goncvpn.aar"))
+    implementation(files("libs/gonctool.aar"))
 }

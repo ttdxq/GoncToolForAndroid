@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Gonc VPN"
+rootProject.name = "Gonc Tool"
 include(":app")

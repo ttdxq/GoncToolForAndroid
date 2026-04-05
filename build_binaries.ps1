@@ -7,7 +7,7 @@ function Build-Android {
         New-Item -ItemType Directory -Path $LibDir -Force
     }
 
-    Write-Host "Building Android AAR (gomobile bind) for gobridge to $LibDir\goncvpn.aar..."
+    Write-Host "Building Android AAR (gomobile bind) for gobridge to $LibDir\gonctool.aar..."
 
     # Ensure we are in the root directory context where gomobile can work best, usually pointing to the package
     # Since gobridge is a sub-module, we need to correct the import path or run from context
@@ -28,7 +28,7 @@ function Build-Android {
     }
 
     cd gobridge
-    # gomobile bind -target=android -o ..\$LibDir\goncvpn.aar .
+    # gomobile bind -target=android -o ..\$LibDir\gonctool.aar .
     # Note: gomobile bind automatically builds for all supported Android architectures (arm, arm64, 386, amd64) by default or specified by -target
     
     # We need to make sure 'gobridge' module is tidy or correct. 
@@ -36,7 +36,7 @@ function Build-Android {
     go mod tidy
     
     # Specify -androidapi 21 to ensure compatibility with modern NDKs that dropped support for older APIs (project requires 21+)
-    gomobile bind -target=android -androidapi 21 -o ..\app\libs\goncvpn.aar .
+    gomobile bind -target=android -androidapi 21 -o ..\app\libs\gonctool.aar .
     
     if ($LASTEXITCODE -ne 0) { 
         Write-Error "Gomobile bind failed"
@@ -45,7 +45,7 @@ function Build-Android {
     }
     
     cd ..
-    Write-Host "Build complete: app\libs\goncvpn.aar"
+    Write-Host "Build complete: app\libs\gonctool.aar"
 }
 
 # Build for Android

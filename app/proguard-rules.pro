@@ -10,14 +10,14 @@
 -keepclassmembers class gobridge.** { *; }
 
 # Keep VpnService
--keep class cyou.ttdxq.goncvpn.android.core.GoncVpnService { *; }
--keepclassmembers class cyou.ttdxq.goncvpn.android.core.GoncVpnService { *; }
+-keep class cyou.ttdxq.gonctool.android.core.GoncToolVpnService { *; }
+-keepclassmembers class cyou.ttdxq.gonctool.android.core.GoncToolVpnService { *; }
 
 # Keep Logger interface
 -keep interface gobridge.Logger { *; }
 
 # Keep all DataStore generated classes
--keep class cyou.ttdxq.goncvpn.android.data.** { *; }
+-keep class cyou.ttdxq.gonctool.android.data.** { *; }
 
 # Keep Kotlin coroutines and Flow
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
