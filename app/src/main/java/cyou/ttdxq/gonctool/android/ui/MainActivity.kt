@@ -79,6 +79,8 @@ class MainActivity : ComponentActivity() {
             val linkGoncDns = settingsStore.linkGoncDns.firstOrNull() ?: false
             val customStunServers = settingsStore.customStunServers.firstOrNull() ?: ""
             val customMqttServers = settingsStore.customMqttServers.firstOrNull() ?: ""
+            val expertModeEnabled = settingsStore.expertModeEnabled.firstOrNull() ?: false
+            val expertModeRawArgs = settingsStore.expertModeRawArgs.firstOrNull() ?: ""
 
             if (p2pSecret.isBlank()) {
                 Toast.makeText(this@MainActivity, getString(R.string.p2p_secret_required), Toast.LENGTH_LONG).show()
@@ -106,6 +108,8 @@ class MainActivity : ComponentActivity() {
                 putExtra(GoncToolVpnService.EXTRA_LINK_GONC_DNS, linkGoncDns)
                 putExtra(GoncToolVpnService.EXTRA_CUSTOM_STUN_SERVERS, customStunServers)
                 putExtra(GoncToolVpnService.EXTRA_CUSTOM_MQTT_SERVERS, customMqttServers)
+                putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_ENABLED, expertModeEnabled)
+                putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_RAW_ARGS, expertModeRawArgs)
             }
             try {
                 startForegroundService(intent)

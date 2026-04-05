@@ -22,6 +22,8 @@ class SettingsStore(private val context: Context) {
         val KEY_LINK_GONC_DNS = booleanPreferencesKey("link_gonc_dns")
         val KEY_CUSTOM_STUN_SERVERS = stringPreferencesKey("custom_stun_servers")
         val KEY_CUSTOM_MQTT_SERVERS = stringPreferencesKey("custom_mqtt_servers")
+        val KEY_EXPERT_MODE_ENABLED = booleanPreferencesKey("expert_mode_enabled")
+        val KEY_EXPERT_MODE_RAW_ARGS = stringPreferencesKey("expert_mode_raw_args")
     }
 
     val p2pSecret: Flow<String> = context.dataStore.data
@@ -49,6 +51,12 @@ class SettingsStore(private val context: Context) {
 
     val customMqttServers: Flow<String> = context.dataStore.data
         .map { preferences -> preferences[KEY_CUSTOM_MQTT_SERVERS] ?: "" }
+
+    val expertModeEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[KEY_EXPERT_MODE_ENABLED] ?: false }
+
+    val expertModeRawArgs: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_EXPERT_MODE_RAW_ARGS] ?: "" }
 
     suspend fun setP2pSecret(secret: String) {
         context.dataStore.edit { preferences ->
@@ -95,6 +103,18 @@ class SettingsStore(private val context: Context) {
     suspend fun setCustomMqttServers(servers: String) {
         context.dataStore.edit { preferences ->
             preferences[KEY_CUSTOM_MQTT_SERVERS] = servers
+        }
+    }
+
+    suspend fun setExpertModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_EXPERT_MODE_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setExpertModeRawArgs(args: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_EXPERT_MODE_RAW_ARGS] = args
         }
     }
 }

@@ -40,6 +40,8 @@ class GoncToolVpnService : VpnService() {
         const val EXTRA_LINK_GONC_DNS = "link_gonc_dns"
         const val EXTRA_CUSTOM_STUN_SERVERS = "custom_stun_servers"
         const val EXTRA_CUSTOM_MQTT_SERVERS = "custom_mqtt_servers"
+        const val EXTRA_EXPERT_MODE_ENABLED = "expert_mode_enabled"
+        const val EXTRA_EXPERT_MODE_RAW_ARGS = "expert_mode_raw_args"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonctool_vpn_channel"
         private const val TAG = "GoncToolVpnService"
@@ -115,7 +117,9 @@ class GoncToolVpnService : VpnService() {
                 val linkGoncDns = intent.getBooleanExtra(EXTRA_LINK_GONC_DNS, false)
                 val customStunServers = intent.getStringExtra(EXTRA_CUSTOM_STUN_SERVERS) ?: ""
                 val customMqttServers = intent.getStringExtra(EXTRA_CUSTOM_MQTT_SERVERS) ?: ""
-                startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers)
+                val expertModeEnabled = intent.getBooleanExtra(EXTRA_EXPERT_MODE_ENABLED, false)
+                val expertModeRawArgs = intent.getStringExtra(EXTRA_EXPERT_MODE_RAW_ARGS) ?: ""
+                startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers, expertModeEnabled, expertModeRawArgs)
             }
             ACTION_STOP -> stopVpn()
             else -> {
@@ -135,6 +139,8 @@ class GoncToolVpnService : VpnService() {
         linkGoncDns: Boolean,
         customStunServers: String,
         customMqttServers: String,
+        expertModeEnabled: Boolean,
+        expertModeRawArgs: String,
     ) {
         if (secret.isBlank()) {
             VpnState.setError("P2P Secret不能为空")
@@ -213,6 +219,10 @@ class GoncToolVpnService : VpnService() {
                         append('"')
                         append(normalizedMqttServers)
                         append('"')
+                    }
+                    if (expertModeEnabled && expertModeRawArgs.isNotBlank()) {
+                        append(' ')
+                        append(expertModeRawArgs.trim())
                     }
                 }
                 val worker = Thread {
