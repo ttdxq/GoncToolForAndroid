@@ -1,9 +1,9 @@
 package cyou.ttdxq.goncvpn.android.data
 
 import cyou.ttdxq.goncvpn.android.BuildConfig
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -16,15 +16,16 @@ enum class LogLevel {
 }
 
 object LogRepository {
-    private val _logs = MutableSharedFlow<String>(replay = 100, extraBufferCapacity = 500)
-    val logs: SharedFlow<String> = _logs.asSharedFlow()
+    private const val MAX_LOGS = 200
+    private val _logs = MutableStateFlow<List<String>>(emptyList())
+    val logs: StateFlow<List<String>> = _logs.asStateFlow()
     private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private val jsonLevelRegex = Regex("\"level\"\\s*:\\s*\"(debug|info|warn|warning|error)\"", RegexOption.IGNORE_CASE)
 
     fun log(tag: String, message: String, level: LogLevel = inferLogLevel(message)) {
         val timestamp = dateFormat.format(Date())
         val entry = "[$timestamp] ${level.name} $tag: $message"
-        _logs.tryEmit(entry)
+        _logs.value = listOf(entry) + _logs.value.take(MAX_LOGS - 1)
 
         if (isDebugBuild()) {
             when (level) {
@@ -43,6 +44,17 @@ object LogRepository {
     fun warn(tag: String, message: String) = log(tag, message, LogLevel.WARN)
 
     fun error(tag: String, message: String) = log(tag, message, LogLevel.ERROR)
+
+    fun error(tag: String, message: String, throwable: Throwable) {
+        log(tag, "$message: ${throwable.message}", LogLevel.ERROR)
+        if (isDebugBuild()) {
+            android.util.Log.e(tag, message, throwable)
+        }
+    }
+
+    fun clear() {
+        _logs.value = emptyList()
+    }
 
     private fun inferLogLevel(message: String): LogLevel {
         val jsonLevel = jsonLevelRegex.find(message)?.groupValues?.getOrNull(1)?.lowercase(Locale.ROOT)

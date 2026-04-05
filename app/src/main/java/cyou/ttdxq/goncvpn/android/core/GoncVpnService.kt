@@ -1,5 +1,6 @@
 package cyou.ttdxq.goncvpn.android.core
 
+import android.app.Service.STOP_FOREGROUND_REMOVE
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,7 +9,6 @@ import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import cyou.ttdxq.goncvpn.android.R
 import cyou.ttdxq.goncvpn.android.BuildConfig
@@ -17,6 +17,7 @@ import cyou.ttdxq.goncvpn.android.data.LogRepository
 import cyou.ttdxq.goncvpn.android.data.LogLevel
 import cyou.ttdxq.goncvpn.android.data.VpnStatus
 import cyou.ttdxq.goncvpn.android.data.VpnState
+import cyou.ttdxq.goncvpn.android.util.normalizeIpAddressInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +38,8 @@ class GoncVpnService : VpnService() {
         const val EXTRA_CUSTOM_DNS_ADDRESS = "custom_dns_address"
         const val EXTRA_DNS_THROUGH_TUNNEL = "dns_through_tunnel"
         const val EXTRA_LINK_GONC_DNS = "link_gonc_dns"
+        const val EXTRA_CUSTOM_STUN_SERVERS = "custom_stun_servers"
+        const val EXTRA_CUSTOM_MQTT_SERVERS = "custom_mqtt_servers"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonc_vpn_channel"
         private const val TAG = "GoncVpnService"
@@ -110,7 +113,9 @@ class GoncVpnService : VpnService() {
                 val customDnsAddress = intent.getStringExtra(EXTRA_CUSTOM_DNS_ADDRESS) ?: ""
                 val dnsThroughTunnel = intent.getBooleanExtra(EXTRA_DNS_THROUGH_TUNNEL, true)
                 val linkGoncDns = intent.getBooleanExtra(EXTRA_LINK_GONC_DNS, false)
-                startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns)
+                val customStunServers = intent.getStringExtra(EXTRA_CUSTOM_STUN_SERVERS) ?: ""
+                val customMqttServers = intent.getStringExtra(EXTRA_CUSTOM_MQTT_SERVERS) ?: ""
+                startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers)
             }
             ACTION_STOP -> stopVpn()
             else -> {
@@ -127,7 +132,9 @@ class GoncVpnService : VpnService() {
         useCustomDns: Boolean,
         customDnsAddress: String,
         dnsThroughTunnel: Boolean,
-        linkGoncDns: Boolean
+        linkGoncDns: Boolean,
+        customStunServers: String,
+        customMqttServers: String,
     ) {
         if (secret.isBlank()) {
             VpnState.setError("P2P Secret不能为空")
@@ -135,7 +142,9 @@ class GoncVpnService : VpnService() {
             return
         }
 
-        val normalizedDns = normalizeDnsAddress(customDnsAddress)
+        val normalizedDns = normalizeIpAddressInput(customDnsAddress)
+        val normalizedStunServers = customStunServers.trim()
+        val normalizedMqttServers = customMqttServers.trim()
         if (useCustomDns && normalizedDns == null) {
             VpnState.setError("DNS 地址无效")
             stopSelf()
@@ -166,7 +175,7 @@ class GoncVpnService : VpnService() {
                 // 1. Setup VPN Interface
                 if (!establishVpnInterface(enableDns = normalizedDns != null && !dnsThroughTunnel)) {
                     val errorMsg = "无法建立VPN接口，请检查VPN权限"
-                    Log.e(TAG, errorMsg)
+                    LogRepository.error(TAG, errorMsg)
                     VpnState.setError(errorMsg)
                     stopSelf()
                     return@launch
@@ -192,6 +201,18 @@ class GoncVpnService : VpnService() {
                     if (normalizedDns != null && linkGoncDns) {
                         append(" -dns ")
                         append(normalizedDns)
+                    }
+                    if (normalizedStunServers.isNotBlank()) {
+                        append(" -stunsrv ")
+                        append('"')
+                        append(normalizedStunServers)
+                        append('"')
+                    }
+                    if (normalizedMqttServers.isNotBlank()) {
+                        append(" -mqttsrv ")
+                        append('"')
+                        append(normalizedMqttServers)
+                        append('"')
                     }
                 }
                 val worker = Thread {
@@ -264,30 +285,30 @@ class GoncVpnService : VpnService() {
                     updateNotification("Stopping...")
                     Gobridge.stopGonc()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error stopping gonc", e)
+                    LogRepository.error(TAG, "Error stopping gonc", e)
                 }
 
                 try {
                     goncThread?.join(1500)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error waiting for gonc thread", e)
+                    LogRepository.error(TAG, "Error waiting for gonc thread", e)
                 }
                 goncThread = null
 
                 try {
                     vpnInterface?.close()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error closing VPN interface", e)
+                    LogRepository.error(TAG, "Error closing VPN interface", e)
                 }
                 vpnInterface = null
 
                 try {
                     Gobridge.stopTun2Socks()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error stopping tun2socks", e)
+                    LogRepository.error(TAG, "Error stopping tun2socks", e)
                 }
                 
-                stopForeground(true)
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 
                 // 延迟更新状态，确保通知消失后再更新
@@ -296,13 +317,6 @@ class GoncVpnService : VpnService() {
                 stopInProgress = false
             }
         }
-    }
-
-    private fun normalizeDnsAddress(address: String): String? {
-        val trimmed = address.trim().removePrefix("[").removeSuffix("]")
-        if (trimmed.isBlank()) return null
-        return runCatching { InetAddress.getByName(trimmed).hostAddress }
-            .getOrNull()
     }
 
     private fun addRouteForAddress(builder: Builder, address: String) {
@@ -348,7 +362,7 @@ class GoncVpnService : VpnService() {
                 builder.addRoute(address, prefixLength)
             } catch (e: Exception) {
                 val errorMsg = "Invalid route: $cidr"
-                Log.e(TAG, errorMsg, e)
+                LogRepository.error(TAG, errorMsg, e)
                 VpnState.setError(errorMsg)
                 throw e
             }

@@ -20,6 +20,8 @@ class SettingsStore(private val context: Context) {
         val KEY_CUSTOM_DNS_ADDRESS = stringPreferencesKey("custom_dns_address")
         val KEY_DNS_THROUGH_TUNNEL = booleanPreferencesKey("dns_through_tunnel")
         val KEY_LINK_GONC_DNS = booleanPreferencesKey("link_gonc_dns")
+        val KEY_CUSTOM_STUN_SERVERS = stringPreferencesKey("custom_stun_servers")
+        val KEY_CUSTOM_MQTT_SERVERS = stringPreferencesKey("custom_mqtt_servers")
     }
 
     val p2pSecret: Flow<String> = context.dataStore.data
@@ -41,6 +43,12 @@ class SettingsStore(private val context: Context) {
 
     val linkGoncDns: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[KEY_LINK_GONC_DNS] ?: false }
+
+    val customStunServers: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_CUSTOM_STUN_SERVERS] ?: "" }
+
+    val customMqttServers: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_CUSTOM_MQTT_SERVERS] ?: "" }
 
     suspend fun setP2pSecret(secret: String) {
         context.dataStore.edit { preferences ->
@@ -75,6 +83,18 @@ class SettingsStore(private val context: Context) {
     suspend fun setLinkGoncDns(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEY_LINK_GONC_DNS] = enabled
+        }
+    }
+
+    suspend fun setCustomStunServers(servers: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_CUSTOM_STUN_SERVERS] = servers
+        }
+    }
+
+    suspend fun setCustomMqttServers(servers: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_CUSTOM_MQTT_SERVERS] = servers
         }
     }
 }
