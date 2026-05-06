@@ -16,6 +16,8 @@ class SettingsStore(private val context: Context) {
     companion object {
         val KEY_P2P_SECRET = stringPreferencesKey("p2p_secret")
         val KEY_ROUTE_CIDRS = stringPreferencesKey("route_cidrs")
+        val KEY_SPLIT_TUNNEL_MODE = stringPreferencesKey("split_tunnel_mode")
+        val KEY_SPLIT_TUNNEL_APPS = stringPreferencesKey("split_tunnel_apps")
         val KEY_USE_CUSTOM_DNS = booleanPreferencesKey("use_custom_dns")
         val KEY_CUSTOM_DNS_ADDRESS = stringPreferencesKey("custom_dns_address")
         val KEY_DNS_THROUGH_TUNNEL = booleanPreferencesKey("dns_through_tunnel")
@@ -24,6 +26,7 @@ class SettingsStore(private val context: Context) {
         val KEY_CUSTOM_MQTT_SERVERS = stringPreferencesKey("custom_mqtt_servers")
         val KEY_EXPERT_MODE_ENABLED = booleanPreferencesKey("expert_mode_enabled")
         val KEY_EXPERT_MODE_RAW_ARGS = stringPreferencesKey("expert_mode_raw_args")
+        val KEY_KCP_ENABLED = booleanPreferencesKey("kcp_enabled")
     }
 
     val p2pSecret: Flow<String> = context.dataStore.data
@@ -33,6 +36,12 @@ class SettingsStore(private val context: Context) {
         .map { preferences ->
             preferences[KEY_ROUTE_CIDRS] ?: "10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16"
         }
+
+    val splitTunnelMode: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_SPLIT_TUNNEL_MODE] ?: "all" }
+
+    val splitTunnelApps: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_SPLIT_TUNNEL_APPS] ?: "[]" }
 
     val useCustomDns: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[KEY_USE_CUSTOM_DNS] ?: false }
@@ -58,6 +67,9 @@ class SettingsStore(private val context: Context) {
     val expertModeRawArgs: Flow<String> = context.dataStore.data
         .map { preferences -> preferences[KEY_EXPERT_MODE_RAW_ARGS] ?: "" }
 
+    val kcpEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[KEY_KCP_ENABLED] ?: false }
+
     suspend fun setP2pSecret(secret: String) {
         context.dataStore.edit { preferences ->
             preferences[KEY_P2P_SECRET] = secret
@@ -67,6 +79,18 @@ class SettingsStore(private val context: Context) {
     suspend fun setRouteCidrs(cidrs: String) {
         context.dataStore.edit { preferences ->
             preferences[KEY_ROUTE_CIDRS] = cidrs
+        }
+    }
+
+    suspend fun setSplitTunnelMode(mode: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_SPLIT_TUNNEL_MODE] = mode
+        }
+    }
+
+    suspend fun setSplitTunnelApps(apps: String) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_SPLIT_TUNNEL_APPS] = apps
         }
     }
 
@@ -115,6 +139,12 @@ class SettingsStore(private val context: Context) {
     suspend fun setExpertModeRawArgs(args: String) {
         context.dataStore.edit { preferences ->
             preferences[KEY_EXPERT_MODE_RAW_ARGS] = args
+        }
+    }
+
+    suspend fun setKcpEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_KCP_ENABLED] = enabled
         }
     }
 }

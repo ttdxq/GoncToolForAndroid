@@ -9,18 +9,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.core.GoncToolVpnService
 import cyou.ttdxq.gonctool.android.data.SettingsStore
@@ -47,7 +53,7 @@ class MainActivity : ComponentActivity() {
         settingsStore = SettingsStore(this)
 
         setContent {
-            MaterialTheme {
+            GoncToolTheme {
                 Surface(modifier = Modifier, color = MaterialTheme.colorScheme.background) {
                     AppRoot(
                         settingsStore = settingsStore,
@@ -73,6 +79,8 @@ class MainActivity : ComponentActivity() {
         scope.launch {
             val p2pSecret = settingsStore.p2pSecret.firstOrNull() ?: ""
             val routeCidrs = settingsStore.routeCidrs.firstOrNull() ?: ""
+            val splitTunnelMode = settingsStore.splitTunnelMode.firstOrNull() ?: "all"
+            val splitTunnelApps = settingsStore.splitTunnelApps.firstOrNull() ?: "[]"
             val useCustomDns = settingsStore.useCustomDns.firstOrNull() ?: false
             val customDnsAddress = settingsStore.customDnsAddress.firstOrNull() ?: ""
             val dnsThroughTunnel = settingsStore.dnsThroughTunnel.firstOrNull() ?: true
@@ -81,6 +89,7 @@ class MainActivity : ComponentActivity() {
             val customMqttServers = settingsStore.customMqttServers.firstOrNull() ?: ""
             val expertModeEnabled = settingsStore.expertModeEnabled.firstOrNull() ?: false
             val expertModeRawArgs = settingsStore.expertModeRawArgs.firstOrNull() ?: ""
+            val kcpEnabled = settingsStore.kcpEnabled.firstOrNull() ?: false
 
             if (p2pSecret.isBlank()) {
                 Toast.makeText(this@MainActivity, getString(R.string.p2p_secret_required), Toast.LENGTH_LONG).show()
@@ -102,6 +111,8 @@ class MainActivity : ComponentActivity() {
                 action = GoncToolVpnService.ACTION_START
                 putExtra(GoncToolVpnService.EXTRA_P2P_SECRET, p2pSecret)
                 putExtra(GoncToolVpnService.EXTRA_ROUTE_CIDRS, routeCidrs)
+                putExtra(GoncToolVpnService.EXTRA_SPLIT_TUNNEL_MODE, splitTunnelMode)
+                putExtra(GoncToolVpnService.EXTRA_SPLIT_TUNNEL_APPS, splitTunnelApps)
                 putExtra(GoncToolVpnService.EXTRA_USE_CUSTOM_DNS, useCustomDns)
                 putExtra(GoncToolVpnService.EXTRA_CUSTOM_DNS_ADDRESS, customDnsAddress)
                 putExtra(GoncToolVpnService.EXTRA_DNS_THROUGH_TUNNEL, dnsThroughTunnel)
@@ -110,6 +121,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(GoncToolVpnService.EXTRA_CUSTOM_MQTT_SERVERS, customMqttServers)
                 putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_ENABLED, expertModeEnabled)
                 putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_RAW_ARGS, expertModeRawArgs)
+                putExtra(GoncToolVpnService.EXTRA_KCP_ENABLED, kcpEnabled)
             }
             try {
                 startForegroundService(intent)
@@ -135,9 +147,24 @@ private fun AppRoot(
     onStopVpn: () -> Unit,
 ) {
     var currentPage by rememberSaveable { mutableStateOf(MainPage.HOME.name) }
+    var prewarmedPages by remember { mutableStateOf(setOf(MainPage.HOME)) }
     val isSubPage = currentPage != MainPage.HOME.name
+    val currentMainPage = MainPage.valueOf(currentPage)
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val splitTunnelMode by settingsStore.splitTunnelMode.collectAsState(initial = SplitTunnelMode.ALL.value)
+
+    LaunchedEffect(splitTunnelMode) {
+        val warmedPages = mutableSetOf(MainPage.HOME, MainPage.SETTINGS, MainPage.LOGS)
+        if (splitTunnelMode != SplitTunnelMode.ALL.value) {
+            warmedPages += MainPage.APP_SELECTOR
+        }
+        prewarmedPages = prewarmedPages + warmedPages
+    }
+
+    LaunchedEffect(currentMainPage) {
+        prewarmedPages = prewarmedPages + currentMainPage
+    }
 
     BackHandler(enabled = isSubPage || drawerState.isOpen) {
         if (drawerState.isOpen) {
@@ -148,8 +175,10 @@ private fun AppRoot(
     }
 
     val onNavigate: (MainPage) -> Unit = { targetPage ->
-        currentPage = targetPage.name
-        scope.launch { drawerState.close() }
+        scope.launch {
+            drawerState.close()
+            currentPage = targetPage.name
+        }
     }
 
     val onMenuClick: () -> Unit = {
@@ -160,27 +189,63 @@ private fun AppRoot(
         drawerState = drawerState,
         drawerContent = {
             AppDrawerContent(
-                currentPage = MainPage.valueOf(currentPage),
+                currentPage = currentMainPage,
                 onNavigate = onNavigate,
             )
         }
     ) {
-        when (MainPage.valueOf(currentPage)) {
-            MainPage.HOME -> VpnControlScreen(
-                settingsStore = settingsStore,
-                onStartVpn = onStartVpn,
-                onStopVpn = onStopVpn,
-                onMenuClick = onMenuClick,
-            )
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (MainPage.HOME in prewarmedPages) {
+                AppPageLayer(visible = currentMainPage == MainPage.HOME) {
+                    VpnControlScreen(
+                        settingsStore = settingsStore,
+                        onStartVpn = onStartVpn,
+                        onStopVpn = onStopVpn,
+                        onMenuClick = onMenuClick,
+                    )
+                }
+            }
 
-            MainPage.SETTINGS -> SettingsScreen(
-                settingsStore = settingsStore,
-                onMenuClick = onMenuClick,
-            )
+            if (MainPage.SETTINGS in prewarmedPages) {
+                AppPageLayer(visible = currentMainPage == MainPage.SETTINGS) {
+                    SettingsScreen(
+                        settingsStore = settingsStore,
+                        onMenuClick = onMenuClick,
+                    )
+                }
+            }
 
-            MainPage.LOGS -> LogsScreen(
-                onMenuClick = onMenuClick,
-            )
+            if (MainPage.APP_SELECTOR in prewarmedPages) {
+                AppPageLayer(visible = currentMainPage == MainPage.APP_SELECTOR) {
+                    AppSelectorScreen(
+                        settingsStore = settingsStore,
+                        onMenuClick = onMenuClick,
+                        shouldLoadApps = splitTunnelMode != SplitTunnelMode.ALL.value,
+                    )
+                }
+            }
+
+            if (MainPage.LOGS in prewarmedPages) {
+                AppPageLayer(visible = currentMainPage == MainPage.LOGS) {
+                    LogsScreen(
+                        onMenuClick = onMenuClick,
+                    )
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun AppPageLayer(
+    visible: Boolean,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .alpha(if (visible) 1f else 0f)
+    ) {
+        content()
     }
 }

@@ -5,11 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
+import com.google.gson.Gson
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.BuildConfig
 import cyou.ttdxq.gonctool.android.ui.MainActivity
@@ -34,6 +36,8 @@ class GoncToolVpnService : VpnService() {
         const val ACTION_STOP = "cyou.ttdxq.gonctool.android.STOP"
         const val EXTRA_P2P_SECRET = "p2p_secret"
         const val EXTRA_ROUTE_CIDRS = "route_cidrs" // Newline separated
+        const val EXTRA_SPLIT_TUNNEL_MODE = "split_tunnel_mode"
+        const val EXTRA_SPLIT_TUNNEL_APPS = "split_tunnel_apps"
         const val EXTRA_USE_CUSTOM_DNS = "use_custom_dns"
         const val EXTRA_CUSTOM_DNS_ADDRESS = "custom_dns_address"
         const val EXTRA_DNS_THROUGH_TUNNEL = "dns_through_tunnel"
@@ -42,6 +46,7 @@ class GoncToolVpnService : VpnService() {
         const val EXTRA_CUSTOM_MQTT_SERVERS = "custom_mqtt_servers"
         const val EXTRA_EXPERT_MODE_ENABLED = "expert_mode_enabled"
         const val EXTRA_EXPERT_MODE_RAW_ARGS = "expert_mode_raw_args"
+        const val EXTRA_KCP_ENABLED = "kcp_enabled"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonctool_vpn_channel"
         private const val TAG = "GoncToolVpnService"
@@ -56,6 +61,8 @@ class GoncToolVpnService : VpnService() {
     @Volatile private var currentRouteCidrs: String = ""
     @Volatile private var currentCustomDnsAddress: String? = null
     @Volatile private var currentDnsThroughTunnel: Boolean = true
+    @Volatile private var currentSplitTunnelMode: String = "all"
+    @Volatile private var currentSplitTunnelApps: List<String> = emptyList()
     
     // JNI Logger implementation
     private val goLogger = object : Logger {
@@ -111,6 +118,8 @@ class GoncToolVpnService : VpnService() {
                 startForeground(NOTIFICATION_ID, createNotification("Starting..."))
                 val secret = intent.getStringExtra(EXTRA_P2P_SECRET) ?: ""
                 val cidrs = intent.getStringExtra(EXTRA_ROUTE_CIDRS) ?: ""
+                val splitTunnelMode = intent.getStringExtra(EXTRA_SPLIT_TUNNEL_MODE) ?: "all"
+                val splitTunnelApps = intent.getStringExtra(EXTRA_SPLIT_TUNNEL_APPS) ?: "[]"
                 val useCustomDns = intent.getBooleanExtra(EXTRA_USE_CUSTOM_DNS, false)
                 val customDnsAddress = intent.getStringExtra(EXTRA_CUSTOM_DNS_ADDRESS) ?: ""
                 val dnsThroughTunnel = intent.getBooleanExtra(EXTRA_DNS_THROUGH_TUNNEL, true)
@@ -119,7 +128,8 @@ class GoncToolVpnService : VpnService() {
                 val customMqttServers = intent.getStringExtra(EXTRA_CUSTOM_MQTT_SERVERS) ?: ""
                 val expertModeEnabled = intent.getBooleanExtra(EXTRA_EXPERT_MODE_ENABLED, false)
                 val expertModeRawArgs = intent.getStringExtra(EXTRA_EXPERT_MODE_RAW_ARGS) ?: ""
-                startVpn(secret, cidrs, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers, expertModeEnabled, expertModeRawArgs)
+                val kcpEnabled = intent.getBooleanExtra(EXTRA_KCP_ENABLED, false)
+                startVpn(secret, cidrs, splitTunnelMode, splitTunnelApps, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers, expertModeEnabled, expertModeRawArgs, kcpEnabled)
             }
             ACTION_STOP -> stopVpn()
             else -> {
@@ -133,6 +143,8 @@ class GoncToolVpnService : VpnService() {
     private fun startVpn(
         secret: String,
         cidrs: String,
+        splitTunnelMode: String,
+        splitTunnelApps: String,
         useCustomDns: Boolean,
         customDnsAddress: String,
         dnsThroughTunnel: Boolean,
@@ -141,6 +153,7 @@ class GoncToolVpnService : VpnService() {
         customMqttServers: String,
         expertModeEnabled: Boolean,
         expertModeRawArgs: String,
+        kcpEnabled: Boolean,
     ) {
         if (secret.isBlank()) {
             VpnState.setError("P2P Secret不能为空")
@@ -173,6 +186,8 @@ class GoncToolVpnService : VpnService() {
         currentRouteCidrs = cidrs
         currentCustomDnsAddress = normalizedDns
         currentDnsThroughTunnel = dnsThroughTunnel
+        currentSplitTunnelMode = splitTunnelMode
+        currentSplitTunnelApps = parseSplitTunnelApps(splitTunnelApps)
         
         VpnState.setStatus(VpnStatus.CONNECTING)
 
@@ -204,6 +219,9 @@ class GoncToolVpnService : VpnService() {
                     append("-p2p ")
                     append(secret)
                     append(" -link 1080;none")
+                    if (kcpEnabled) {
+                        append(" -kcp")
+                    }
                     if (normalizedDns != null && linkGoncDns) {
                         append(" -dns ")
                         append(normalizedDns)
@@ -337,9 +355,10 @@ class GoncToolVpnService : VpnService() {
         val builder = Builder()
             .addAddress("10.0.0.2", 32)
             .addAddress("fd00::2", 128)
-            .addDisallowedApplication(packageName)
             .setMtu(1400)
             .setSession(getString(R.string.vpn_session_name))
+
+        applySplitTunnelConfiguration(builder)
 
         currentCustomDnsAddress?.let { dnsAddress ->
             if (enableDns) {
@@ -379,6 +398,64 @@ class GoncToolVpnService : VpnService() {
         }
 
         return builder
+    }
+
+    private fun applySplitTunnelConfiguration(builder: Builder) {
+        when (currentSplitTunnelMode) {
+            "allow" -> {
+                val allowedPackages = currentSplitTunnelApps
+                    .filter { it.isNotBlank() && it != packageName }
+                    .distinct()
+                if (allowedPackages.isEmpty()) {
+                    // No apps selected in allow mode → behaves like "all" mode
+                    addApplicationSafely(packageName, isAllowed = false) { builder.addDisallowedApplication(it) }
+                } else {
+                    // Only selected apps go through VPN; our app's traffic stays direct
+                    allowedPackages.forEach { pkg ->
+                        addApplicationSafely(pkg, isAllowed = true) { builder.addAllowedApplication(it) }
+                    }
+                }
+            }
+
+            "deny" -> {
+                addApplicationSafely(packageName, isAllowed = false) { builder.addDisallowedApplication(it) }
+                currentSplitTunnelApps
+                    .filter { it.isNotBlank() && it != packageName }
+                    .distinct()
+                    .forEach { pkg ->
+                        addApplicationSafely(pkg, isAllowed = false) { builder.addDisallowedApplication(it) }
+                    }
+            }
+
+            else -> {
+                addApplicationSafely(packageName, isAllowed = false) { builder.addDisallowedApplication(it) }
+            }
+        }
+    }
+
+    private fun addApplicationSafely(
+        packageName: String,
+        isAllowed: Boolean,
+        action: (String) -> Unit,
+    ) {
+        try {
+            action(packageName)
+        } catch (e: PackageManager.NameNotFoundException) {
+            LogRepository.warn(
+                TAG,
+                "Skipping ${if (isAllowed) "allowed" else "disallowed"} package $packageName: ${e.message}"
+            )
+        }
+    }
+
+    private fun parseSplitTunnelApps(splitTunnelApps: String): List<String> {
+        return runCatching {
+            Gson().fromJson(splitTunnelApps, Array<String>::class.java)
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.distinct()
+                ?: emptyList()
+        }.getOrDefault(emptyList())
     }
 
     private fun establishVpnInterface(enableDns: Boolean): Boolean {
