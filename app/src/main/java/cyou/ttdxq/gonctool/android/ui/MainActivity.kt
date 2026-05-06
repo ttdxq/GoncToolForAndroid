@@ -27,6 +27,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.zIndex
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.core.GoncToolVpnService
 import cyou.ttdxq.gonctool.android.data.SettingsStore
@@ -245,6 +246,7 @@ private fun AppPageLayer(
         modifier = Modifier
             .fillMaxSize()
             .alpha(if (visible) 1f else 0f)
+            .zIndex(if (visible) 1f else 0f)
     ) {
         content()
     }
