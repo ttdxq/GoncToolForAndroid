@@ -1,6 +1,11 @@
 package cyou.ttdxq.gonctool.android.ui
 
 import android.os.Build
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,30 +14,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.data.SettingsStore
 import cyou.ttdxq.gonctool.android.util.isValidIpAddressInput
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,10 +59,53 @@ fun SettingsScreen(
     val customMqttServers by settingsStore.customMqttServers.collectAsState(initial = "")
     val expertModeEnabled by settingsStore.expertModeEnabled.collectAsState(initial = false)
     val expertModeRawArgs by settingsStore.expertModeRawArgs.collectAsState(initial = "")
+    val kcpEnabled by settingsStore.kcpEnabled.collectAsState(initial = false)
     var showExpertModeDialog by remember { mutableStateOf(false) }
 
+    var dnsInput by remember { mutableStateOf(customDnsAddress) }
+    var stunInput by remember { mutableStateOf(customStunServers) }
+    var mqttInput by remember { mutableStateOf(customMqttServers) }
+    var expertArgsInput by remember { mutableStateOf(expertModeRawArgs) }
+    var isDnsInputInvalid by remember { mutableStateOf(false) }
+
+    LaunchedEffect(customDnsAddress) { dnsInput = customDnsAddress }
+    LaunchedEffect(customStunServers) { stunInput = customStunServers }
+    LaunchedEffect(customMqttServers) { mqttInput = customMqttServers }
+    LaunchedEffect(expertModeRawArgs) { expertArgsInput = expertModeRawArgs }
+
+    LaunchedEffect(dnsInput, customDnsAddress) {
+        if (dnsInput != customDnsAddress) {
+            delay(400)
+            settingsStore.setCustomDnsAddress(dnsInput)
+        }
+    }
+    LaunchedEffect(stunInput, customStunServers) {
+        if (stunInput != customStunServers) {
+            delay(400)
+            settingsStore.setCustomStunServers(stunInput)
+        }
+    }
+    LaunchedEffect(mqttInput, customMqttServers) {
+        if (mqttInput != customMqttServers) {
+            delay(400)
+            settingsStore.setCustomMqttServers(mqttInput)
+        }
+    }
+    LaunchedEffect(expertArgsInput, expertModeRawArgs) {
+        if (expertArgsInput != expertModeRawArgs) {
+            delay(400)
+            settingsStore.setExpertModeRawArgs(expertArgsInput)
+        }
+    }
+
     val canBypassDns = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-    val dnsValidationError = if (useCustomDns && !isValidIpAddressInput(customDnsAddress)) {
+    LaunchedEffect(useCustomDns, dnsInput, customDnsAddress) {
+        if (dnsInput != customDnsAddress) {
+            delay(300)
+        }
+        isDnsInputInvalid = useCustomDns && !isValidIpAddressInput(dnsInput)
+    }
+    val dnsValidationError = if (isDnsInputInvalid) {
         stringResource(R.string.dns_address_validation)
     } else {
         null
@@ -79,160 +131,239 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                text = stringResource(R.string.network_settings_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Row(
+            // 📦 传输协议
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.use_custom_dns))
-                Switch(
-                    checked = useCustomDns,
-                    onCheckedChange = { enabled ->
-                        scope.launch { settingsStore.setUseCustomDns(enabled) }
-                    }
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.transport_section_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.kcp_enabled))
+                            Text(
+                                text = stringResource(R.string.kcp_enabled_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = kcpEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { settingsStore.setKcpEnabled(enabled) }
+                            }
+                        )
+                    }
+                }
             }
 
-            OutlinedTextField(
-                value = customDnsAddress,
-                onValueChange = { address ->
-                    scope.launch { settingsStore.setCustomDnsAddress(address) }
-                },
-                label = { Text(stringResource(R.string.dns_address_label)) },
-                supportingText = {
-                    Text(dnsValidationError ?: stringResource(R.string.dns_address_example))
-                },
-                isError = dnsValidationError != null,
+            // 🌐 网络设置
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = useCustomDns,
-                singleLine = true
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                )
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.dns_through_tunnel))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
                     Text(
-                        text = if (canBypassDns) {
-                            stringResource(R.string.dns_through_tunnel_enabled_hint)
-                        } else {
-                            stringResource(R.string.dns_through_tunnel_disabled_hint)
+                        text = stringResource(R.string.network_settings_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(stringResource(R.string.use_custom_dns))
+                        Switch(
+                            checked = useCustomDns,
+                            onCheckedChange = { enabled ->
+                                scope.launch { settingsStore.setUseCustomDns(enabled) }
+                            }
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = dnsInput,
+                        onValueChange = { dnsInput = it },
+                        label = { Text(stringResource(R.string.dns_address_label)) },
+                        supportingText = {
+                            Text(dnsValidationError ?: stringResource(R.string.dns_address_example))
                         },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        isError = dnsValidationError != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = useCustomDns,
+                        singleLine = true
                     )
-                }
-                Switch(
-                    checked = dnsThroughTunnel,
-                    onCheckedChange = { enabled ->
-                        scope.launch {
-                            settingsStore.setDnsThroughTunnel(if (canBypassDns) enabled else true)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.dns_through_tunnel))
+                            Text(
+                                text = if (canBypassDns) {
+                                    stringResource(R.string.dns_through_tunnel_enabled_hint)
+                                } else {
+                                    stringResource(R.string.dns_through_tunnel_disabled_hint)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    },
-                    enabled = useCustomDns && canBypassDns
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.link_gonc_dns))
-                    Text(
-                        text = stringResource(R.string.link_gonc_dns_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = linkGoncDns,
-                    onCheckedChange = { enabled ->
-                        scope.launch { settingsStore.setLinkGoncDns(enabled) }
-                    },
-                    enabled = useCustomDns
-                )
-            }
-
-            Text(
-                text = stringResource(R.string.p2p_network_section_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            OutlinedTextField(
-                value = customStunServers,
-                onValueChange = { servers ->
-                    scope.launch { settingsStore.setCustomStunServers(servers) }
-                },
-                label = { Text(stringResource(R.string.custom_stun_servers_label)) },
-                supportingText = {
-                    Text(stringResource(R.string.custom_stun_servers_hint))
-                },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-            )
-
-            OutlinedTextField(
-                value = customMqttServers,
-                onValueChange = { servers ->
-                    scope.launch { settingsStore.setCustomMqttServers(servers) }
-                },
-                label = { Text(stringResource(R.string.custom_mqtt_servers_label)) },
-                supportingText = {
-                    Text(stringResource(R.string.custom_mqtt_servers_hint))
-                },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-            )
-
-            Text(
-                text = stringResource(R.string.expert_mode_section_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.expert_mode_switch_label))
-                Switch(
-                    checked = expertModeEnabled,
-                    onCheckedChange = { enabled ->
-                        if (enabled) {
-                            showExpertModeDialog = true
-                        } else {
-                            scope.launch { settingsStore.setExpertModeEnabled(false) }
-                        }
+                        Switch(
+                            checked = dnsThroughTunnel,
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    settingsStore.setDnsThroughTunnel(if (canBypassDns) enabled else true)
+                                }
+                            },
+                            enabled = useCustomDns && canBypassDns
+                        )
                     }
-                )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.link_gonc_dns))
+                            Text(
+                                text = stringResource(R.string.link_gonc_dns_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = linkGoncDns,
+                            onCheckedChange = { enabled ->
+                                scope.launch { settingsStore.setLinkGoncDns(enabled) }
+                            },
+                            enabled = useCustomDns
+                        )
+                    }
+                }
             }
 
-            if (expertModeEnabled) {
-                OutlinedTextField(
-                    value = expertModeRawArgs,
-                    onValueChange = { args ->
-                        scope.launch { settingsStore.setExpertModeRawArgs(args) }
-                    },
-                    label = { Text(stringResource(R.string.expert_mode_raw_args_label)) },
-                    supportingText = {
-                        Text(stringResource(R.string.expert_mode_raw_args_hint))
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
+            // 📡 P2P 辅助服务器
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.p2p_network_section_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OutlinedTextField(
+                        value = stunInput,
+                        onValueChange = { stunInput = it },
+                        label = { Text(stringResource(R.string.custom_stun_servers_label)) },
+                        supportingText = {
+                            Text(stringResource(R.string.custom_stun_servers_hint))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+
+                    OutlinedTextField(
+                        value = mqttInput,
+                        onValueChange = { mqttInput = it },
+                        label = { Text(stringResource(R.string.custom_mqtt_servers_label)) },
+                        supportingText = {
+                            Text(stringResource(R.string.custom_mqtt_servers_hint))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                }
+            }
+
+            // ⚙️ 专家模式
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.expert_mode_section_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(stringResource(R.string.expert_mode_switch_label))
+                        Switch(
+                            checked = expertModeEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    showExpertModeDialog = true
+                                } else {
+                                    scope.launch { settingsStore.setExpertModeEnabled(false) }
+                                }
+                            }
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = expertModeEnabled,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        OutlinedTextField(
+                            value = expertArgsInput,
+                            onValueChange = { expertArgsInput = it },
+                            label = { Text(stringResource(R.string.expert_mode_raw_args_label)) },
+                            supportingText = {
+                                Text(stringResource(R.string.expert_mode_raw_args_hint))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                        )
+                    }
+                }
             }
 
             if (showExpertModeDialog) {
