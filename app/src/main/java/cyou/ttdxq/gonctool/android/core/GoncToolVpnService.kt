@@ -17,8 +17,10 @@ import cyou.ttdxq.gonctool.android.BuildConfig
 import cyou.ttdxq.gonctool.android.ui.MainActivity
 import cyou.ttdxq.gonctool.android.data.LogRepository
 import cyou.ttdxq.gonctool.android.data.LogLevel
+import cyou.ttdxq.gonctool.android.data.P2PConnectionReport
 import cyou.ttdxq.gonctool.android.data.VpnStatus
 import cyou.ttdxq.gonctool.android.data.VpnState
+import cyou.ttdxq.gonctool.android.data.VpnTraffic
 import cyou.ttdxq.gonctool.android.util.normalizeIpAddressInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +29,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import gobridge.Gobridge
 import gobridge.Logger
-import java.lang.reflect.Proxy
+import gobridge.TunnelListener
 import java.net.InetAddress
 
 class GoncToolVpnService : VpnService() {
@@ -53,16 +55,30 @@ class GoncToolVpnService : VpnService() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    private val interfaceLock = Any()
     private var vpnInterface: ParcelFileDescriptor? = null
     @Volatile private var goncThread: Thread? = null
     @Volatile private var stopInProgress = false
     @Volatile private var tunnelReady = false
+    @Volatile private var tunnelActivationInProgress = false
+    @Volatile private var currentProxyEndpoint = ""
     @Volatile private var dnsActivatedAfterTunnel = false
     @Volatile private var currentRouteCidrs: String = ""
     @Volatile private var currentCustomDnsAddress: String? = null
     @Volatile private var currentDnsThroughTunnel: Boolean = true
     @Volatile private var currentSplitTunnelMode: String = "all"
     @Volatile private var currentSplitTunnelApps: List<String> = emptyList()
+
+    private fun takeVpnInterface(): ParcelFileDescriptor? = synchronized(interfaceLock) {
+        vpnInterface.also { vpnInterface = null }
+    }
+
+    private fun closeVpnInterface() {
+        takeVpnInterface()?.let { descriptor ->
+            runCatching { descriptor.close() }
+                .onFailure { LogRepository.error(TAG, "Error closing VPN interface", it) }
+        }
+    }
     
     // JNI Logger implementation
     private val goLogger = object : Logger {
@@ -71,44 +87,72 @@ class GoncToolVpnService : VpnService() {
         }
     }
 
+    private val tunnelListener = object : TunnelListener {
+        override fun event(level: String?, message: String?) {
+            message?.trim()?.takeIf { it.isNotEmpty() }?.let { LogRepository.log("Gonc", it) }
+        }
+
+        override fun p2PReport(
+            topic: String?,
+            side: String?,
+            status: String?,
+            network: String?,
+            mode: String?,
+            peer: String?,
+            timestamp: Long,
+            pid: Long,
+            reasonCode: String?,
+            reasonMessage: String?,
+        ) {
+            VpnState.setConnectionReport(
+                P2PConnectionReport(
+                    status = status.orEmpty(),
+                    network = network.orEmpty(),
+                    mode = mode.orEmpty(),
+                    peer = peer.orEmpty(),
+                    reasonCode = reasonCode.orEmpty(),
+                    reasonMessage = reasonMessage.orEmpty(),
+                    timestamp = timestamp,
+                )
+            )
+        }
+
+        override fun traffic(
+            side: String?,
+            inBytes: Long,
+            outBytes: Long,
+            inBps: Double,
+            outBps: Double,
+            elapsed: Long,
+            connCount: Long,
+            final: Boolean,
+        ) {
+            VpnState.setTraffic(VpnTraffic(inBytes, outBytes, inBps, outBps, connCount))
+        }
+
+        override fun ready(endpoint: String?) {
+            val proxyEndpoint = endpoint?.takeIf { it.isNotBlank() } ?: return
+            serviceScope.launch(Dispatchers.IO) { activateTunnel(proxyEndpoint) }
+        }
+
+        override fun stopped(exitCode: Long) {
+            LogRepository.info(TAG, "Gonc session stopped with exit code $exitCode")
+        }
+
+        override fun error(message: String?) {
+            if (!stopInProgress) {
+                val errorMessage = message?.takeIf { it.isNotBlank() } ?: "Gonc tunnel failed"
+                VpnState.setError(errorMessage)
+                updateNotification("Error: tunnel setup failed")
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         Gobridge.setLogger(goLogger)
-        registerGoStatusListener()
         VpnState.setStatus(VpnStatus.DISCONNECTED)
-    }
-
-    private fun registerGoStatusListener() {
-        try {
-            val listenerClass = Class.forName("gobridge.StatusListener")
-            val proxy = Proxy.newProxyInstance(
-                listenerClass.classLoader,
-                arrayOf(listenerClass)
-            ) { _, method, args ->
-                if (method.name == "onStatusChanged" && args?.isNotEmpty() == true) {
-                    val status = args[0] as? String
-                     if (status == "connected") {
-                         serviceScope.launch(Dispatchers.Main) {
-                             if (!stopInProgress && vpnInterface != null) {
-                                 tunnelReady = true
-                                 serviceScope.launch(Dispatchers.IO) {
-                                     activateDnsAfterTunnelReadyIfNeeded()
-                                 }
-                                 updateNotification("Connected")
-                                 VpnState.setStatus(VpnStatus.CONNECTED)
-                             }
-                         }
-                    }
-                }
-                null
-            }
-            val setStatusListener = Gobridge::class.java.getMethod("setStatusListener", listenerClass)
-            setStatusListener.invoke(null, proxy)
-            LogRepository.info(TAG, "Registered Go status listener")
-        } catch (e: ReflectiveOperationException) {
-            LogRepository.warn(TAG, "Go status listener unavailable in current AAR: ${e.message}")
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -181,72 +225,53 @@ class GoncToolVpnService : VpnService() {
             return
         }
 
+        val selectedDns = if (useCustomDns) normalizedDns else null
         tunnelReady = false
+        tunnelActivationInProgress = false
+        currentProxyEndpoint = ""
         dnsActivatedAfterTunnel = false
         currentRouteCidrs = cidrs
-        currentCustomDnsAddress = normalizedDns
+        currentCustomDnsAddress = selectedDns
         currentDnsThroughTunnel = dnsThroughTunnel
         currentSplitTunnelMode = splitTunnelMode
         currentSplitTunnelApps = parseSplitTunnelApps(splitTunnelApps)
-        
+        VpnState.resetConnectionDiagnostics()
         VpnState.setStatus(VpnStatus.CONNECTING)
 
         serviceScope.launch(Dispatchers.IO) {
             try {
-                // 1. Setup VPN Interface
-                if (!establishVpnInterface(enableDns = normalizedDns != null && !dnsThroughTunnel)) {
-                    val errorMsg = "无法建立VPN接口，请检查VPN权限"
-                    LogRepository.error(TAG, errorMsg)
-                    VpnState.setError(errorMsg)
-                    stopSelf()
-                    return@launch
-                }
-
-                val fd = vpnInterface!!.fd
-                LogRepository.info(TAG, "VPN interface established. FD: $fd")
-
-                // 2. Start Tun2Socks (Non-blocking usually, but allows packet processing)
-                // We use socks5://127.0.0.1:1080 as the proxy target for tun2socks
-                // Logic: tun2socks reads form TUN -> forwards to SOCKS5 (gonc)
-                // Go 'int' maps to Java 'long', so we must cast fd and mtu.
-                val tunLogLevel = resolveTun2SocksLogLevel()
-                Gobridge.startTun2Socks(fd.toLong(), "socks5://127.0.0.1:1080", "tun0", 1400L, tunLogLevel)
-                LogRepository.info(TAG, "Tun2Socks started with log level: $tunLogLevel")
-
-                // 3. Start Gonc (Blocking, so run in separate thread)
-                // Args: -p2p <SECRET> -link 1080;none
-                val goncArgs = buildString {
-                    append("-p2p ")
-                    append(secret)
-                    append(" -link 1080;none")
+                val extraArgs = buildString {
                     if (kcpEnabled) {
-                        append(" -kcp")
+                        append("-kcp")
                     }
-                    if (normalizedDns != null && linkGoncDns) {
-                        append(" -dns ")
-                        append(normalizedDns)
+                    if (selectedDns != null && linkGoncDns) {
+                        if (isNotEmpty()) append(' ')
+                        append("-dns ")
+                        append(selectedDns)
                     }
                     if (normalizedStunServers.isNotBlank()) {
-                        append(" -stunsrv ")
+                        if (isNotEmpty()) append(' ')
+                        append("-stunsrv ")
                         append('"')
                         append(normalizedStunServers)
                         append('"')
                     }
                     if (normalizedMqttServers.isNotBlank()) {
-                        append(" -mqttsrv ")
+                        if (isNotEmpty()) append(' ')
+                        append("-mqttsrv ")
                         append('"')
                         append(normalizedMqttServers)
                         append('"')
                     }
                     if (expertModeEnabled && expertModeRawArgs.isNotBlank()) {
-                        append(' ')
+                        if (isNotEmpty()) append(' ')
                         append(expertModeRawArgs.trim())
                     }
                 }
                 val worker = Thread {
                     LogRepository.info(TAG, "Starting Gonc...")
                     try {
-                        Gobridge.startGonc(goncArgs)
+                        Gobridge.startP2PTunnel(secret, false, "1080;none", extraArgs, tunnelListener)
                     } catch (e: Exception) {
                         LogRepository.error(TAG, "Gonc exited with error: ${e.message}")
                     }
@@ -257,7 +282,7 @@ class GoncToolVpnService : VpnService() {
                     }
                     if (!stopInProgress) {
                         serviceScope.launch(Dispatchers.Main) {
-                            if (!stopInProgress && vpnInterface != null) {
+                            if (!stopInProgress && VpnState.status.value != VpnStatus.ERROR) {
                                 if (wasReady) {
                                     VpnState.setError("Gonc tunnel disconnected")
                                     updateNotification("Error: Gonc tunnel disconnected")
@@ -273,7 +298,6 @@ class GoncToolVpnService : VpnService() {
                 worker.start()
 
                 updateNotification("Connecting...")
-
             } catch (e: Exception) {
                 val errorMsg = "启动VPN失败: ${e.message}"
                 LogRepository.error(TAG, "FATAL: $errorMsg")
@@ -298,17 +322,26 @@ class GoncToolVpnService : VpnService() {
     }
 
     private fun stopVpn() {
-        if (stopInProgress) {
-            LogRepository.warn(TAG, "Stop already in progress")
-            return
+        synchronized(this) {
+            if (stopInProgress) {
+                LogRepository.warn(TAG, "Stop already in progress")
+                return
+            }
+            stopInProgress = true
+            tunnelReady = false
+            tunnelActivationInProgress = false
+            dnsActivatedAfterTunnel = false
+            VpnState.setStatus(VpnStatus.STOPPING)
         }
-        stopInProgress = true
-        tunnelReady = false
-        dnsActivatedAfterTunnel = false
-        VpnState.setStatus(VpnStatus.STOPPING)
-        
+
         serviceScope.launch(Dispatchers.IO) {
             try {
+                // Stop the fd consumer first so cancellation does not wait on
+                // a goroutine blocked in the TUN read path.
+                runCatching { Gobridge.stopTun2Socks() }
+                    .onFailure { LogRepository.error(TAG, "Error stopping tun2socks", it) }
+                closeVpnInterface()
+
                 try {
                     updateNotification("Stopping...")
                     Gobridge.stopGonc()
@@ -322,19 +355,7 @@ class GoncToolVpnService : VpnService() {
                     LogRepository.error(TAG, "Error waiting for gonc thread", e)
                 }
                 goncThread = null
-
-                try {
-                    vpnInterface?.close()
-                } catch (e: Exception) {
-                    LogRepository.error(TAG, "Error closing VPN interface", e)
-                }
-                vpnInterface = null
-
-                try {
-                    Gobridge.stopTun2Socks()
-                } catch (e: Exception) {
-                    LogRepository.error(TAG, "Error stopping tun2socks", e)
-                }
+                currentProxyEndpoint = ""
                 
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -433,6 +454,44 @@ class GoncToolVpnService : VpnService() {
         }
     }
 
+    private fun activateTunnel(proxyEndpoint: String) {
+        synchronized(this) {
+            if (stopInProgress || tunnelReady || tunnelActivationInProgress) {
+                return
+            }
+            tunnelActivationInProgress = true
+        }
+        try {
+            if (!establishVpnInterface(enableDns = currentCustomDnsAddress != null && !currentDnsThroughTunnel)) {
+                throw IllegalStateException("无法建立VPN接口，请检查VPN权限")
+            }
+            if (stopInProgress) {
+                closeVpnInterface()
+                return
+            }
+            val fd = vpnInterface?.fd ?: throw IllegalStateException("VPN interface has no file descriptor")
+            currentProxyEndpoint = proxyEndpoint
+            val tunLogLevel = resolveTun2SocksLogLevel()
+            Gobridge.startTun2Socks(fd.toLong(), proxyEndpoint, "tun0", 1400L, tunLogLevel)
+            tunnelReady = true
+            activateDnsAfterTunnelReadyIfNeeded()
+            updateNotification("Connected")
+            VpnState.setStatus(VpnStatus.CONNECTED)
+            LogRepository.info(TAG, "VPN tunnel activated with $proxyEndpoint")
+        } catch (e: Exception) {
+            if (stopInProgress) {
+                return
+            }
+            val message = "启动 VPN 数据通道失败: ${e.message}"
+            LogRepository.error(TAG, message)
+            VpnState.setError(message)
+            updateNotification("Error: tunnel activation failed")
+            Gobridge.stopGonc()
+        } finally {
+            tunnelActivationInProgress = false
+        }
+    }
+
     private fun addApplicationSafely(
         packageName: String,
         isAllowed: Boolean,
@@ -461,20 +520,22 @@ class GoncToolVpnService : VpnService() {
     private fun establishVpnInterface(enableDns: Boolean): Boolean {
         val builder = createVpnBuilder(enableDns)
         val newInterface = builder.establish() ?: return false
-        val oldInterface = vpnInterface
-        vpnInterface = newInterface
+        val oldInterface = synchronized(interfaceLock) {
+            vpnInterface.also { vpnInterface = newInterface }
+        }
         oldInterface?.close()
         return true
     }
 
     private fun restartTun2Socks() {
         val fd = vpnInterface?.fd ?: return
+        val proxyEndpoint = currentProxyEndpoint.takeIf { it.isNotBlank() } ?: return
         try {
             Gobridge.stopTun2Socks()
         } catch (_: Exception) {
         }
         val tunLogLevel = resolveTun2SocksLogLevel()
-        Gobridge.startTun2Socks(fd.toLong(), "socks5://127.0.0.1:1080", "tun0", 1400L, tunLogLevel)
+        Gobridge.startTun2Socks(fd.toLong(), proxyEndpoint, "tun0", 1400L, tunLogLevel)
         LogRepository.info(TAG, "Tun2Socks started with log level: $tunLogLevel")
     }
 
@@ -502,11 +563,18 @@ class GoncToolVpnService : VpnService() {
         // Ensure cleanup
         try {
             tunnelReady = false
+            tunnelActivationInProgress = false
             VpnState.setStatus(VpnStatus.STOPPING)
-            Gobridge.stopGonc()
-            goncThread?.join(1500)
-            Gobridge.stopTun2Socks()
-            vpnInterface?.close()
+            closeVpnInterface()
+            // When stopVpn() called stopSelf(), its IO cleanup is already in
+            // progress. Repeating the native stop calls here can re-enter the
+            // bridge and add several seconds to teardown.
+            if (!stopInProgress) {
+                Gobridge.stopTun2Socks()
+                Gobridge.stopGonc()
+                goncThread?.join(500)
+            }
+            currentProxyEndpoint = ""
         } catch(_: Exception){}
         goncThread = null
         stopInProgress = false
@@ -541,6 +609,11 @@ class GoncToolVpnService : VpnService() {
     }
     
     private fun updateNotification(status: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         val manager = getSystemService(NotificationManager::class.java)
         manager?.notify(NOTIFICATION_ID, createNotification(status))
     }

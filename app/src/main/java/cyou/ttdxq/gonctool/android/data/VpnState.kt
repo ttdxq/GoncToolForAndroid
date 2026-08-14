@@ -15,15 +15,37 @@ enum class VpnStatus {
     ERROR           // 错误
 }
 
+data class P2PConnectionReport(
+    val status: String,
+    val network: String,
+    val mode: String,
+    val peer: String,
+    val reasonCode: String,
+    val reasonMessage: String,
+    val timestamp: Long,
+)
+
+data class VpnTraffic(
+    val inBytes: Long,
+    val outBytes: Long,
+    val inBps: Double,
+    val outBps: Double,
+    val connectionCount: Long,
+)
+
 /**
  * VPN状态管理器（单例）
  */
 object VpnState {
     private val _status = MutableStateFlow(VpnStatus.DISCONNECTED)
     private val _errorMessage = MutableStateFlow<String?>(null)
+    private val _connectionReport = MutableStateFlow<P2PConnectionReport?>(null)
+    private val _traffic = MutableStateFlow<VpnTraffic?>(null)
     
     val status: StateFlow<VpnStatus> = _status.asStateFlow()
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    val connectionReport: StateFlow<P2PConnectionReport?> = _connectionReport.asStateFlow()
+    val traffic: StateFlow<VpnTraffic?> = _traffic.asStateFlow()
     
     /**
      * 更新状态
@@ -49,5 +71,18 @@ object VpnState {
      */
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    fun resetConnectionDiagnostics() {
+        _connectionReport.value = null
+        _traffic.value = null
+    }
+
+    fun setConnectionReport(report: P2PConnectionReport) {
+        _connectionReport.value = report
+    }
+
+    fun setTraffic(traffic: VpnTraffic) {
+        _traffic.value = traffic
     }
 }

@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,6 +79,7 @@ enum class MainPage {
     HOME,
     SETTINGS,
     APP_SELECTOR,
+    DIAGNOSTICS,
     LOGS,
 }
 
@@ -125,6 +127,13 @@ fun AppDrawerContent(
             label = { Text(stringResource(R.string.menu_app_selector)) },
             selected = currentPage == MainPage.APP_SELECTOR,
             onClick = { onNavigate(MainPage.APP_SELECTOR) },
+            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+        )
+        NavigationDrawerItem(
+            icon = { Icon(Icons.Filled.Info, contentDescription = null) },
+            label = { Text(stringResource(R.string.menu_diagnostics)) },
+            selected = currentPage == MainPage.DIAGNOSTICS,
+            onClick = { onNavigate(MainPage.DIAGNOSTICS) },
             modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
         )
         NavigationDrawerItem(

@@ -156,7 +156,7 @@ private fun AppRoot(
     val splitTunnelMode by settingsStore.splitTunnelMode.collectAsState(initial = SplitTunnelMode.ALL.value)
 
     LaunchedEffect(splitTunnelMode) {
-        val warmedPages = mutableSetOf(MainPage.HOME, MainPage.SETTINGS, MainPage.LOGS)
+        val warmedPages = mutableSetOf(MainPage.HOME, MainPage.SETTINGS, MainPage.DIAGNOSTICS, MainPage.LOGS)
         if (splitTunnelMode != SplitTunnelMode.ALL.value) {
             warmedPages += MainPage.APP_SELECTOR
         }
@@ -229,6 +229,15 @@ private fun AppRoot(
             if (MainPage.LOGS in prewarmedPages) {
                 AppPageLayer(visible = currentMainPage == MainPage.LOGS) {
                     LogsScreen(
+                        onMenuClick = onMenuClick,
+                    )
+                }
+            }
+
+            if (MainPage.DIAGNOSTICS in prewarmedPages) {
+                AppPageLayer(visible = currentMainPage == MainPage.DIAGNOSTICS) {
+                    NetworkDiagnosticsScreen(
+                        settingsStore = settingsStore,
                         onMenuClick = onMenuClick,
                     )
                 }
