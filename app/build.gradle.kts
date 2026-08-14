@@ -34,6 +34,12 @@ val verifyGonctoolAar by tasks.registering {
                         append("Rebuild app/libs/gonctool.aar from the current gobridge sources before assembling the APK.")
                     }
                 }
+                require(classesZip.getEntry("gobridge/DiagnosticsListener.class") != null) {
+                    "Stale ${aarFile.path}: gobridge/DiagnosticsListener.class is missing. Rebuild the AAR."
+                }
+                require(classesZip.getEntry("gobridge/TunnelListener.class") != null) {
+                    "Stale ${aarFile.path}: gobridge/TunnelListener.class is missing. Rebuild the AAR."
+                }
             }
         }
     }
