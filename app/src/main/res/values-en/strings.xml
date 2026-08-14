@@ -56,6 +56,8 @@
     <string name="transport_section_title">Transport Protocol</string>
     <string name="kcp_enabled">KCP Transport Acceleration</string>
     <string name="kcp_enabled_hint">Use UDP-based KCP protocol instead of TCP for lower latency on unreliable networks (requires server support)</string>
+    <string name="auto_p2p_lan">Automatic P2P + LAN race</string>
+    <string name="auto_p2p_lan_hint">Try public P2P and LAN discovery together, then use the first path that connects</string>
     <string name="app_selector_title">Per-App Proxy</string>
     <string name="menu_app_selector">Per-App Proxy</string>
     <string name="split_tunnel_mode_all">All Apps</string>

@@ -27,6 +27,7 @@ class SettingsStore(private val context: Context) {
         val KEY_EXPERT_MODE_ENABLED = booleanPreferencesKey("expert_mode_enabled")
         val KEY_EXPERT_MODE_RAW_ARGS = stringPreferencesKey("expert_mode_raw_args")
         val KEY_KCP_ENABLED = booleanPreferencesKey("kcp_enabled")
+        val KEY_AUTO_P2P_LAN = booleanPreferencesKey("auto_p2p_lan")
     }
 
     val p2pSecret: Flow<String> = context.dataStore.data
@@ -69,6 +70,9 @@ class SettingsStore(private val context: Context) {
 
     val kcpEnabled: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[KEY_KCP_ENABLED] ?: false }
+
+    val autoP2pLan: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[KEY_AUTO_P2P_LAN] ?: true }
 
     suspend fun setP2pSecret(secret: String) {
         context.dataStore.edit { preferences ->
@@ -145,6 +149,12 @@ class SettingsStore(private val context: Context) {
     suspend fun setKcpEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEY_KCP_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setAutoP2pLan(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_AUTO_P2P_LAN] = enabled
         }
     }
 }

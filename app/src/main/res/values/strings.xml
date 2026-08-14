@@ -64,6 +64,8 @@
     <string name="transport_section_title">📦 传输协议</string>
     <string name="kcp_enabled">KCP 传输加速</string>
     <string name="kcp_enabled_hint">使用基于 UDP 的 KCP 协议替代 TCP，在弱网环境下降低延迟（需要服务端支持）</string>
+    <string name="auto_p2p_lan">自动 P2P + LAN 竞速</string>
+    <string name="auto_p2p_lan_hint">同时尝试公网 P2P 和局域网发现，自动使用最先连接成功的路径</string>
     <string name="log_filter_all">ALL</string>
     <string name="log_filter_debug">DEBUG</string>
     <string name="log_filter_info">INFO</string>

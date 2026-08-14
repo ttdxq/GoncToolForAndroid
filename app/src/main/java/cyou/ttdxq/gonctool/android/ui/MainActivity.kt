@@ -91,6 +91,7 @@ class MainActivity : ComponentActivity() {
             val expertModeEnabled = settingsStore.expertModeEnabled.firstOrNull() ?: false
             val expertModeRawArgs = settingsStore.expertModeRawArgs.firstOrNull() ?: ""
             val kcpEnabled = settingsStore.kcpEnabled.firstOrNull() ?: false
+            val autoP2pLan = settingsStore.autoP2pLan.firstOrNull() ?: true
 
             if (p2pSecret.isBlank()) {
                 Toast.makeText(this@MainActivity, getString(R.string.p2p_secret_required), Toast.LENGTH_LONG).show()
@@ -123,6 +124,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_ENABLED, expertModeEnabled)
                 putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_RAW_ARGS, expertModeRawArgs)
                 putExtra(GoncToolVpnService.EXTRA_KCP_ENABLED, kcpEnabled)
+                putExtra(GoncToolVpnService.EXTRA_AUTO_P2P_LAN, autoP2pLan)
             }
             try {
                 startForegroundService(intent)

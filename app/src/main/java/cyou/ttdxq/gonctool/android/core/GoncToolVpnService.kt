@@ -4,9 +4,11 @@ import android.app.Service.STOP_FOREGROUND_REMOVE
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.IpPrefix
+import android.net.wifi.WifiManager
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -49,6 +51,7 @@ class GoncToolVpnService : VpnService() {
         const val EXTRA_EXPERT_MODE_ENABLED = "expert_mode_enabled"
         const val EXTRA_EXPERT_MODE_RAW_ARGS = "expert_mode_raw_args"
         const val EXTRA_KCP_ENABLED = "kcp_enabled"
+        const val EXTRA_AUTO_P2P_LAN = "auto_p2p_lan"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonctool_vpn_channel"
         private const val TAG = "GoncToolVpnService"
@@ -56,7 +59,9 @@ class GoncToolVpnService : VpnService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private val interfaceLock = Any()
+    private val multicastLockGuard = Any()
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     @Volatile private var goncThread: Thread? = null
     @Volatile private var stopInProgress = false
     @Volatile private var tunnelReady = false
@@ -92,6 +97,37 @@ class GoncToolVpnService : VpnService() {
         }.onFailure {
             LogRepository.error(TAG, "Unable to duplicate VPN interface fd", it)
         }.getOrNull()
+    }
+
+    private fun acquireMulticastLock() {
+        synchronized(multicastLockGuard) {
+            if (multicastLock?.isHeld == true) return
+            runCatching {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                wifiManager.createMulticastLock("gonctool-p2p-lan-race").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }.onSuccess { lock ->
+                multicastLock = lock
+                LogRepository.info(TAG, "LAN discovery multicast lock acquired")
+            }.onFailure { error ->
+                LogRepository.warn(TAG, "Unable to acquire LAN discovery multicast lock: ${error.message}")
+            }
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        synchronized(multicastLockGuard) {
+            multicastLock?.let { lock ->
+                runCatching {
+                    if (lock.isHeld) lock.release()
+                }.onFailure { error ->
+                    LogRepository.warn(TAG, "Unable to release LAN discovery multicast lock: ${error.message}")
+                }
+            }
+            multicastLock = null
+        }
     }
     
     // JNI Logger implementation
@@ -187,7 +223,8 @@ class GoncToolVpnService : VpnService() {
                 val expertModeEnabled = intent.getBooleanExtra(EXTRA_EXPERT_MODE_ENABLED, false)
                 val expertModeRawArgs = intent.getStringExtra(EXTRA_EXPERT_MODE_RAW_ARGS) ?: ""
                 val kcpEnabled = intent.getBooleanExtra(EXTRA_KCP_ENABLED, false)
-                startVpn(secret, cidrs, splitTunnelMode, splitTunnelApps, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers, expertModeEnabled, expertModeRawArgs, kcpEnabled)
+                val autoP2pLan = intent.getBooleanExtra(EXTRA_AUTO_P2P_LAN, true)
+                startVpn(secret, cidrs, splitTunnelMode, splitTunnelApps, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers, expertModeEnabled, expertModeRawArgs, kcpEnabled, autoP2pLan)
             }
             ACTION_STOP -> stopVpn()
             else -> {
@@ -212,6 +249,7 @@ class GoncToolVpnService : VpnService() {
         expertModeEnabled: Boolean,
         expertModeRawArgs: String,
         kcpEnabled: Boolean,
+        autoP2pLan: Boolean,
     ) {
         if (secret.isBlank()) {
             VpnState.setError("P2P Secret不能为空")
@@ -254,8 +292,15 @@ class GoncToolVpnService : VpnService() {
 
         serviceScope.launch(Dispatchers.IO) {
             try {
+                if (autoP2pLan) {
+                    acquireMulticastLock()
+                }
                 val extraArgs = buildString {
+                    if (autoP2pLan) {
+                        append("-p2p-with-lan")
+                    }
                     if (kcpEnabled) {
+                        if (isNotEmpty()) append(' ')
                         append("-kcp")
                     }
                     if (selectedDns != null && linkGoncDns) {
@@ -290,6 +335,7 @@ class GoncToolVpnService : VpnService() {
                         LogRepository.error(TAG, "Gonc exited with error: ${e.message}")
                     }
                     LogRepository.info(TAG, "Gonc thread exited")
+                    releaseMulticastLock()
                     val wasReady = tunnelReady
                     if (goncThread === Thread.currentThread()) {
                         goncThread = null
@@ -313,6 +359,7 @@ class GoncToolVpnService : VpnService() {
 
                 updateNotification("Connecting...")
             } catch (e: Exception) {
+                releaseMulticastLock()
                 val errorMsg = "启动VPN失败: ${e.message}"
                 LogRepository.error(TAG, "FATAL: $errorMsg")
                 VpnState.setError(errorMsg)
@@ -377,6 +424,7 @@ class GoncToolVpnService : VpnService() {
                 // 延迟更新状态，确保通知消失后再更新
                 VpnState.setStatus(VpnStatus.DISCONNECTED)
             } finally {
+                releaseMulticastLock()
                 stopInProgress = false
             }
         }
@@ -591,7 +639,10 @@ class GoncToolVpnService : VpnService() {
                 closeVpnInterface()
             }
             currentProxyEndpoint = ""
-        } catch(_: Exception){}
+        } catch(_: Exception) {
+        } finally {
+            releaseMulticastLock()
+        }
         goncThread = null
         stopInProgress = false
         

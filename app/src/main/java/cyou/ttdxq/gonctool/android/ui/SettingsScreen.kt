@@ -60,6 +60,7 @@ fun SettingsScreen(
     val expertModeEnabled by settingsStore.expertModeEnabled.collectAsState(initial = false)
     val expertModeRawArgs by settingsStore.expertModeRawArgs.collectAsState(initial = "")
     val kcpEnabled by settingsStore.kcpEnabled.collectAsState(initial = false)
+    val autoP2pLan by settingsStore.autoP2pLan.collectAsState(initial = true)
     var showExpertModeDialog by remember { mutableStateOf(false) }
 
     var dnsInput by remember { mutableStateOf(customDnsAddress) }
@@ -166,6 +167,26 @@ fun SettingsScreen(
                             checked = kcpEnabled,
                             onCheckedChange = { enabled ->
                                 scope.launch { settingsStore.setKcpEnabled(enabled) }
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.auto_p2p_lan))
+                            Text(
+                                text = stringResource(R.string.auto_p2p_lan_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = autoP2pLan,
+                            onCheckedChange = { enabled ->
+                                scope.launch { settingsStore.setAutoP2pLan(enabled) }
                             }
                         )
                     }
