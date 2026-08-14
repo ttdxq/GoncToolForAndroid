@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -20,11 +21,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -33,6 +36,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.data.LogRepository
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 private val logLevelPattern = Regex("""^\[\d{2}:\d{2}:\d{2}] (\w+)\b""")
 
@@ -56,12 +60,42 @@ fun LogsScreen(
     val clipboardManager = LocalClipboardManager.current
     var selectedLevel by remember { mutableStateOf(LogFilterLevel.ALL) }
     var searchQuery by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    var followLatest by remember { mutableStateOf(true) }
+    var automaticScrollInProgress by remember { mutableStateOf(false) }
     val filteredLogs = remember(logs, selectedLevel, searchQuery) {
         val keyword = searchQuery.trim()
         logs.filter { log ->
             val matchesLevel = selectedLevel.rawLevel == null || extractLogLevel(log) == selectedLevel.rawLevel
             val matchesKeyword = keyword.isBlank() || log.contains(keyword, ignoreCase = true)
             matchesLevel && matchesKeyword
+        }
+    }
+
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val isAtBottom = layoutInfo.totalItemsCount == 0 ||
+                lastVisibleIndex >= layoutInfo.totalItemsCount - 1
+            listState.isScrollInProgress to isAtBottom
+        }
+            .distinctUntilChanged()
+            .collect { (isScrolling, isAtBottom) ->
+                if (isScrolling && !automaticScrollInProgress) {
+                    followLatest = isAtBottom
+                }
+            }
+    }
+
+    LaunchedEffect(filteredLogs, selectedLevel, searchQuery) {
+        if (followLatest && filteredLogs.isNotEmpty()) {
+            automaticScrollInProgress = true
+            try {
+                listState.animateScrollToItem(filteredLogs.lastIndex)
+            } finally {
+                automaticScrollInProgress = false
+            }
         }
     }
 
@@ -146,6 +180,7 @@ fun LogsScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -153,7 +188,6 @@ fun LogsScreen(
                 ) {
                     items(
                         items = filteredLogs,
-                        key = { log -> log }
                     ) { log ->
                         Text(
                             text = log,

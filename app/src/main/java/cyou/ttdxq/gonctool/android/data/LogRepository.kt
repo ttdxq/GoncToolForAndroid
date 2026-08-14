@@ -4,6 +4,7 @@ import cyou.ttdxq.gonctool.android.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -23,9 +24,9 @@ object LogRepository {
     private val jsonLevelRegex = Regex("\"level\"\\s*:\\s*\"(debug|info|warn|warning|error)\"", RegexOption.IGNORE_CASE)
 
     fun log(tag: String, message: String, level: LogLevel = inferLogLevel(message)) {
-        val timestamp = dateFormat.format(Date())
+        val timestamp = synchronized(dateFormat) { dateFormat.format(Date()) }
         val entry = "[$timestamp] ${level.name} $tag: $message"
-        _logs.value = listOf(entry) + _logs.value.take(MAX_LOGS - 1)
+        _logs.update { current -> appendBoundedLog(current, entry, MAX_LOGS) }
 
         if (isDebugBuild()) {
             when (level) {
@@ -79,4 +80,8 @@ object LogRepository {
     private fun isDebugBuild(): Boolean {
         return BuildConfig.DEBUG
     }
+}
+
+internal fun appendBoundedLog(logs: List<String>, entry: String, maxLogs: Int): List<String> {
+    return (logs + entry).takeLast(maxLogs)
 }
