@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">Gonc Tool</string>
     <string name="vpn_permission_denied">VPN permission denied</string>
+    <string name="notification_permission_denied">Notification permission denied. The VPN can still connect, but its notification may not be visible.</string>
     <string name="p2p_secret_required">P2P secret key cannot be empty</string>
     <string name="dns_address_invalid">Invalid DNS address</string>
     <string name="cidr_validation_failed">CIDR validation failed: %1$s</string>
@@ -21,6 +22,10 @@
     <string name="status_stopping">Stopping…</string>
     <string name="status_connected">Connected</string>
     <string name="status_error">Error</string>
+    <string name="traffic_download_rate">Down %1$s</string>
+    <string name="traffic_upload_rate">Up %1$s</string>
+    <string name="traffic_rate_summary">Down %1$s · Up %2$s</string>
+    <string name="traffic_total_summary">Received %1$s · Sent %2$s · %3$s</string>
     <string name="p2p_secret_label">P2P Secret Key</string>
     <string name="route_cidrs_label">Route CIDRs (one per line)</string>
     <string name="route_cidrs_hint">e.g. 0.0.0.0/0 or ::/0 for full proxy</string>

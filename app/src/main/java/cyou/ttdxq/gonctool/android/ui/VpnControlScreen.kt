@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -50,8 +52,12 @@ import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.data.SettingsStore
 import cyou.ttdxq.gonctool.android.data.VpnState
 import cyou.ttdxq.gonctool.android.data.VpnStatus
+import cyou.ttdxq.gonctool.android.data.VpnTraffic
 import cyou.ttdxq.gonctool.android.util.CidrValidationResult
 import cyou.ttdxq.gonctool.android.util.CidrValidator
+import cyou.ttdxq.gonctool.android.util.formatElapsedDuration
+import cyou.ttdxq.gonctool.android.util.formatTrafficBytes
+import cyou.ttdxq.gonctool.android.util.formatTrafficRate
 import kotlinx.coroutines.launch
 
 private const val CIDR_PRESET_GLOBAL = "0.0.0.0/0\n::/0"
@@ -70,7 +76,7 @@ private fun normalizeCidrs(value: String): String {
 }
 
 @Composable
-fun StatusCard(status: VpnStatus, errorMessage: String?) {
+fun StatusCard(status: VpnStatus, errorMessage: String?, traffic: VpnTraffic?) {
     val statusColors = getStatusColors()
 
     val targetContainerColor = when (status) {
@@ -168,6 +174,55 @@ fun StatusCard(status: VpnStatus, errorMessage: String?) {
                     )
                 }
             }
+            AnimatedVisibility(
+                visible = (status == VpnStatus.CONNECTED || status == VpnStatus.STOPPING) && traffic != null,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                traffic?.let { snapshot ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    R.string.traffic_download_rate,
+                                    formatTrafficRate(snapshot.inBps),
+                                ),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontFeatureSettings = "tnum"),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = stringResource(
+                                    R.string.traffic_upload_rate,
+                                    formatTrafficRate(snapshot.outBps),
+                                ),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontFeatureSettings = "tnum"),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        Text(
+                            text = stringResource(
+                                R.string.traffic_total_summary,
+                                formatTrafficBytes(snapshot.inBytes),
+                                formatTrafficBytes(snapshot.outBytes),
+                                formatElapsedDuration(snapshot.elapsedSeconds),
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -185,6 +240,7 @@ fun VpnControlScreen(
     val routeCidrs by settingsStore.routeCidrs.collectAsState(initial = "")
     val vpnStatus by VpnState.status.collectAsState()
     val errorMessage by VpnState.errorMessage.collectAsState()
+    val traffic by VpnState.traffic.collectAsState()
 
     var secretInput by remember { mutableStateOf(p2pSecret) }
     var cidrsInput by remember { mutableStateOf(routeCidrs) }
@@ -248,10 +304,11 @@ fun VpnControlScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            StatusCard(vpnStatus, errorMessage)
+            StatusCard(vpnStatus, errorMessage, traffic)
 
             OutlinedTextField(
                 value = secretInput,

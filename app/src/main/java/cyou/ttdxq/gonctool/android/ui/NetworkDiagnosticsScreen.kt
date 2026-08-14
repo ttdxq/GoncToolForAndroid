@@ -42,9 +42,9 @@ import cyou.ttdxq.gonctool.android.data.StunDiagnosticResult
 import cyou.ttdxq.gonctool.android.data.VpnState
 import cyou.ttdxq.gonctool.android.data.VpnStatus
 import cyou.ttdxq.gonctool.android.data.VpnTraffic
+import cyou.ttdxq.gonctool.android.util.formatTrafficRate
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,8 +159,8 @@ private fun DiagnosticsContent(
                         label = stringResource(R.string.diagnostics_connection_rate),
                         value = stringResource(
                             R.string.diagnostics_rate_value,
-                            formatRate(snapshot.inBps),
-                            formatRate(snapshot.outBps),
+                            formatTrafficRate(snapshot.inBps),
+                            formatTrafficRate(snapshot.outBps),
                         ),
                     )
                     DiagnosticValueRow(
@@ -440,12 +440,4 @@ private fun connectionStatusLabel(status: String): String = when (status.lowerca
     "disconnected" -> stringResource(R.string.diagnostics_stage_disconnected)
     "error" -> stringResource(R.string.diagnostics_stage_error)
     else -> status.ifBlank { stringResource(R.string.diagnostics_unknown) }
-}
-
-private fun formatRate(bytesPerSecond: Double): String {
-    return when {
-        bytesPerSecond >= 1024 * 1024 -> String.format(Locale.getDefault(), "%.1f MiB/s", bytesPerSecond / (1024 * 1024))
-        bytesPerSecond >= 1024 -> String.format(Locale.getDefault(), "%.1f KiB/s", bytesPerSecond / 1024)
-        else -> String.format(Locale.getDefault(), "%.0f B/s", bytesPerSecond)
-    }
 }

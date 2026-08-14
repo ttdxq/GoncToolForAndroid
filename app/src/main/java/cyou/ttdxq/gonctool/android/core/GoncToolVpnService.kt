@@ -12,6 +12,7 @@ import android.net.wifi.WifiManager
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
 import cyou.ttdxq.gonctool.android.R
@@ -23,6 +24,9 @@ import cyou.ttdxq.gonctool.android.data.P2PConnectionReport
 import cyou.ttdxq.gonctool.android.data.VpnStatus
 import cyou.ttdxq.gonctool.android.data.VpnState
 import cyou.ttdxq.gonctool.android.data.VpnTraffic
+import cyou.ttdxq.gonctool.android.util.formatElapsedDuration
+import cyou.ttdxq.gonctool.android.util.formatTrafficBytes
+import cyou.ttdxq.gonctool.android.util.formatTrafficRate
 import cyou.ttdxq.gonctool.android.util.normalizeIpAddressInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +59,7 @@ class GoncToolVpnService : VpnService() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonctool_vpn_channel"
         private const val TAG = "GoncToolVpnService"
+        private const val TRAFFIC_NOTIFICATION_INTERVAL_MS = 2_000L
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
@@ -71,6 +76,7 @@ class GoncToolVpnService : VpnService() {
     @Volatile private var currentRouteCidrs: String = ""
     @Volatile private var currentCustomDnsAddress: String? = null
     @Volatile private var currentDnsThroughTunnel: Boolean = true
+    @Volatile private var lastTrafficNotificationAt = 0L
     @Volatile private var currentSplitTunnelMode: String = "all"
     @Volatile private var currentSplitTunnelApps: List<String> = emptyList()
 
@@ -177,7 +183,17 @@ class GoncToolVpnService : VpnService() {
             connCount: Long,
             final: Boolean,
         ) {
-            VpnState.setTraffic(VpnTraffic(inBytes, outBytes, inBps, outBps, connCount))
+            val traffic = VpnTraffic(
+                inBytes = inBytes,
+                outBytes = outBytes,
+                inBps = inBps,
+                outBps = outBps,
+                elapsedSeconds = elapsed,
+                connectionCount = connCount,
+                isFinal = final,
+            )
+            VpnState.setTraffic(traffic)
+            updateTrafficNotification(traffic)
         }
 
         override fun ready(endpoint: String?) {
@@ -287,6 +303,7 @@ class GoncToolVpnService : VpnService() {
         currentDnsThroughTunnel = dnsThroughTunnel
         currentSplitTunnelMode = splitTunnelMode
         currentSplitTunnelApps = parseSplitTunnelApps(splitTunnelApps)
+        lastTrafficNotificationAt = 0L
         VpnState.resetConnectionDiagnostics()
         VpnState.setStatus(VpnStatus.CONNECTING)
 
@@ -673,6 +690,50 @@ class GoncToolVpnService : VpnService() {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
+    }
+
+    private fun createTrafficNotification(traffic: VpnTraffic): android.app.Notification {
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val rates = getString(
+            R.string.traffic_rate_summary,
+            formatTrafficRate(traffic.inBps),
+            formatTrafficRate(traffic.outBps),
+        )
+        val totals = getString(
+            R.string.traffic_total_summary,
+            formatTrafficBytes(traffic.inBytes),
+            formatTrafficBytes(traffic.outBytes),
+            formatElapsedDuration(traffic.elapsedSeconds),
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(rates)
+            .setSubText(totals)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$rates\n$totals"))
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun updateTrafficNotification(traffic: VpnTraffic) {
+        if (!tunnelReady || stopInProgress) return
+
+        val now = SystemClock.elapsedRealtime()
+        if (!traffic.isFinal && now - lastTrafficNotificationAt < TRAFFIC_NOTIFICATION_INTERVAL_MS) return
+        lastTrafficNotificationAt = now
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        getSystemService(NotificationManager::class.java)
+            ?.notify(NOTIFICATION_ID, createTrafficNotification(traffic))
     }
     
     private fun updateNotification(status: String) {

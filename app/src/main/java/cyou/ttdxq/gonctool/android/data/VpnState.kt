@@ -30,7 +30,9 @@ data class VpnTraffic(
     val outBytes: Long,
     val inBps: Double,
     val outBps: Double,
+    val elapsedSeconds: Long,
     val connectionCount: Long,
+    val isFinal: Boolean,
 )
 
 /**
