@@ -21,6 +21,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,11 +39,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.data.SettingsStore
+import cyou.ttdxq.gonctool.android.util.RelayConfig
+import cyou.ttdxq.gonctool.android.util.RelayConfigError
+import cyou.ttdxq.gonctool.android.util.RelayMode
 import cyou.ttdxq.gonctool.android.util.isValidIpAddressInput
+import cyou.ttdxq.gonctool.android.util.validateRelayConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -61,18 +72,39 @@ fun SettingsScreen(
     val expertModeRawArgs by settingsStore.expertModeRawArgs.collectAsState(initial = "")
     val kcpEnabled by settingsStore.kcpEnabled.collectAsState(initial = false)
     val autoP2pLan by settingsStore.autoP2pLan.collectAsState(initial = true)
+    val relayEnabled by settingsStore.relayEnabled.collectAsState(initial = false)
+    val relayModeValue by settingsStore.relayMode.collectAsState(initial = RelayMode.FALLBACK.value)
+    val relayHost by settingsStore.relayHost.collectAsState(initial = "")
+    val relayPort by settingsStore.relayPort.collectAsState(initial = "1080")
+    val relayTlsEnabled by settingsStore.relayTlsEnabled.collectAsState(initial = false)
+    val relayPsk by settingsStore.relayPsk.collectAsState(initial = "")
+    val relayAuthEnabled by settingsStore.relayAuthEnabled.collectAsState(initial = false)
+    val relayUsername by settingsStore.relayUsername.collectAsState(initial = "")
+    val relayPassword by settingsStore.relayPassword.collectAsState(initial = "")
     var showExpertModeDialog by remember { mutableStateOf(false) }
 
     var dnsInput by remember { mutableStateOf(customDnsAddress) }
     var stunInput by remember { mutableStateOf(customStunServers) }
     var mqttInput by remember { mutableStateOf(customMqttServers) }
     var expertArgsInput by remember { mutableStateOf(expertModeRawArgs) }
+    var relayHostInput by remember { mutableStateOf(relayHost) }
+    var relayPortInput by remember { mutableStateOf(relayPort) }
+    var relayPskInput by remember { mutableStateOf(relayPsk) }
+    var relayUsernameInput by remember { mutableStateOf(relayUsername) }
+    var relayPasswordInput by remember { mutableStateOf(relayPassword) }
+    var relayPskVisible by remember { mutableStateOf(false) }
+    var relayPasswordVisible by remember { mutableStateOf(false) }
     var isDnsInputInvalid by remember { mutableStateOf(false) }
 
     LaunchedEffect(customDnsAddress) { dnsInput = customDnsAddress }
     LaunchedEffect(customStunServers) { stunInput = customStunServers }
     LaunchedEffect(customMqttServers) { mqttInput = customMqttServers }
     LaunchedEffect(expertModeRawArgs) { expertArgsInput = expertModeRawArgs }
+    LaunchedEffect(relayHost) { relayHostInput = relayHost }
+    LaunchedEffect(relayPort) { relayPortInput = relayPort }
+    LaunchedEffect(relayPsk) { relayPskInput = relayPsk }
+    LaunchedEffect(relayUsername) { relayUsernameInput = relayUsername }
+    LaunchedEffect(relayPassword) { relayPasswordInput = relayPassword }
 
     LaunchedEffect(dnsInput, customDnsAddress) {
         if (dnsInput != customDnsAddress) {
@@ -98,6 +130,36 @@ fun SettingsScreen(
             settingsStore.setExpertModeRawArgs(expertArgsInput)
         }
     }
+    LaunchedEffect(relayHostInput, relayHost) {
+        if (relayHostInput != relayHost) {
+            delay(400)
+            settingsStore.setRelayHost(relayHostInput)
+        }
+    }
+    LaunchedEffect(relayPortInput, relayPort) {
+        if (relayPortInput != relayPort) {
+            delay(400)
+            settingsStore.setRelayPort(relayPortInput)
+        }
+    }
+    LaunchedEffect(relayPskInput, relayPsk) {
+        if (relayPskInput != relayPsk) {
+            delay(400)
+            settingsStore.setRelayPsk(relayPskInput)
+        }
+    }
+    LaunchedEffect(relayUsernameInput, relayUsername) {
+        if (relayUsernameInput != relayUsername) {
+            delay(400)
+            settingsStore.setRelayUsername(relayUsernameInput)
+        }
+    }
+    LaunchedEffect(relayPasswordInput, relayPassword) {
+        if (relayPasswordInput != relayPassword) {
+            delay(400)
+            settingsStore.setRelayPassword(relayPasswordInput)
+        }
+    }
 
     val canBypassDns = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     LaunchedEffect(useCustomDns, dnsInput, customDnsAddress) {
@@ -111,6 +173,20 @@ fun SettingsScreen(
     } else {
         null
     }
+    val relayMode = RelayMode.fromValue(relayModeValue)
+    val relayValidationError = validateRelayConfig(
+        RelayConfig(
+            enabled = relayEnabled,
+            mode = relayMode,
+            host = relayHostInput,
+            port = relayPortInput.toIntOrNull() ?: 0,
+            tlsEnabled = relayTlsEnabled,
+            psk = relayPskInput,
+            authEnabled = relayAuthEnabled,
+            username = relayUsernameInput,
+            password = relayPasswordInput,
+        )
+    )
 
     Scaffold(
         topBar = {
@@ -189,6 +265,213 @@ fun SettingsScreen(
                                 scope.launch { settingsStore.setAutoP2pLan(enabled) }
                             }
                         )
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.relay_section_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.relay_enabled))
+                            Text(
+                                text = stringResource(R.string.relay_enabled_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = relayEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { settingsStore.setRelayEnabled(enabled) }
+                            }
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = relayEnabled,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(
+                                text = stringResource(R.string.relay_mode_label),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                val modes = listOf(RelayMode.FALLBACK, RelayMode.FORCE)
+                                modes.forEachIndexed { index, mode ->
+                                    SegmentedButton(
+                                        selected = relayMode == mode,
+                                        onClick = {
+                                            scope.launch { settingsStore.setRelayMode(mode.value) }
+                                        },
+                                        shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                                        label = {
+                                            Text(
+                                                if (mode == RelayMode.FALLBACK) {
+                                                    stringResource(R.string.relay_mode_fallback)
+                                                } else {
+                                                    stringResource(R.string.relay_mode_force)
+                                                }
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if (relayMode == RelayMode.FALLBACK) {
+                                    stringResource(R.string.relay_mode_fallback_hint)
+                                } else {
+                                    stringResource(R.string.relay_mode_force_hint)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                OutlinedTextField(
+                                    value = relayHostInput,
+                                    onValueChange = { relayHostInput = it },
+                                    label = { Text(stringResource(R.string.relay_host_label)) },
+                                    supportingText = {
+                                        Text(
+                                            when (relayValidationError) {
+                                                RelayConfigError.HOST_REQUIRED -> stringResource(R.string.relay_host_required)
+                                                RelayConfigError.HOST_INVALID -> stringResource(R.string.relay_host_invalid)
+                                                else -> stringResource(R.string.relay_host_hint)
+                                            }
+                                        )
+                                    },
+                                    isError = relayValidationError == RelayConfigError.HOST_REQUIRED ||
+                                        relayValidationError == RelayConfigError.HOST_INVALID,
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = relayPortInput,
+                                    onValueChange = { value ->
+                                        relayPortInput = value.filter(Char::isDigit).take(5)
+                                    },
+                                    label = { Text(stringResource(R.string.relay_port_label)) },
+                                    supportingText = {
+                                        if (relayValidationError == RelayConfigError.PORT_INVALID) {
+                                            Text(stringResource(R.string.relay_port_invalid))
+                                        }
+                                    },
+                                    isError = relayValidationError == RelayConfigError.PORT_INVALID,
+                                    modifier = Modifier.weight(0.45f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.relay_tls_enabled))
+                                    Text(
+                                        text = stringResource(R.string.relay_tls_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = relayTlsEnabled,
+                                    onCheckedChange = { enabled ->
+                                        scope.launch { settingsStore.setRelayTlsEnabled(enabled) }
+                                    }
+                                )
+                            }
+                            AnimatedVisibility(visible = relayTlsEnabled) {
+                                RelaySecretField(
+                                    value = relayPskInput,
+                                    onValueChange = { relayPskInput = it },
+                                    label = stringResource(R.string.relay_psk_label),
+                                    error = if (relayValidationError == RelayConfigError.PSK_REQUIRED) {
+                                        stringResource(R.string.relay_psk_required)
+                                    } else {
+                                        null
+                                    },
+                                    visible = relayPskVisible,
+                                    onVisibilityChange = { relayPskVisible = !relayPskVisible }
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.relay_auth_enabled))
+                                    Text(
+                                        text = stringResource(R.string.relay_auth_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = relayAuthEnabled,
+                                    onCheckedChange = { enabled ->
+                                        scope.launch { settingsStore.setRelayAuthEnabled(enabled) }
+                                    }
+                                )
+                            }
+                            AnimatedVisibility(visible = relayAuthEnabled) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = relayUsernameInput,
+                                        onValueChange = { relayUsernameInput = it },
+                                        label = { Text(stringResource(R.string.relay_username_label)) },
+                                        isError = relayValidationError == RelayConfigError.CREDENTIALS_REQUIRED &&
+                                            relayUsernameInput.isBlank(),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    RelaySecretField(
+                                        value = relayPasswordInput,
+                                        onValueChange = { relayPasswordInput = it },
+                                        label = stringResource(R.string.relay_password_label),
+                                        error = if (relayValidationError == RelayConfigError.CREDENTIALS_REQUIRED &&
+                                            relayPasswordInput.isBlank()
+                                        ) {
+                                            stringResource(R.string.relay_credentials_required)
+                                        } else {
+                                            null
+                                        },
+                                        visible = relayPasswordVisible,
+                                        onVisibilityChange = { relayPasswordVisible = !relayPasswordVisible }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -409,4 +692,35 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun RelaySecretField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    error: String?,
+    visible: Boolean,
+    onVisibilityChange: () -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        supportingText = error?.let { message -> { Text(message) } },
+        isError = error != null,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        visualTransformation = if (visible) {
+            VisualTransformation.None
+        } else {
+            PasswordVisualTransformation()
+        },
+        trailingIcon = {
+            TextButton(onClick = onVisibilityChange) {
+                Text(stringResource(if (visible) R.string.hide_secret else R.string.show_secret))
+            }
+        }
+    )
 }

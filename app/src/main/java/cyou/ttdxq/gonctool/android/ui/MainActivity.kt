@@ -36,7 +36,11 @@ import cyou.ttdxq.gonctool.android.core.GoncToolVpnService
 import cyou.ttdxq.gonctool.android.data.SettingsStore
 import cyou.ttdxq.gonctool.android.util.CidrValidationResult
 import cyou.ttdxq.gonctool.android.util.CidrValidator
+import cyou.ttdxq.gonctool.android.util.RelayConfig
+import cyou.ttdxq.gonctool.android.util.RelayConfigError
+import cyou.ttdxq.gonctool.android.util.RelayMode
 import cyou.ttdxq.gonctool.android.util.isValidIpAddressInput
+import cyou.ttdxq.gonctool.android.util.validateRelayConfig
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
@@ -112,6 +116,17 @@ class MainActivity : ComponentActivity() {
             val expertModeRawArgs = settingsStore.expertModeRawArgs.firstOrNull() ?: ""
             val kcpEnabled = settingsStore.kcpEnabled.firstOrNull() ?: false
             val autoP2pLan = settingsStore.autoP2pLan.firstOrNull() ?: true
+            val relayConfig = RelayConfig(
+                enabled = settingsStore.relayEnabled.firstOrNull() ?: false,
+                mode = RelayMode.fromValue(settingsStore.relayMode.firstOrNull() ?: "fallback"),
+                host = settingsStore.relayHost.firstOrNull() ?: "",
+                port = settingsStore.relayPort.firstOrNull()?.toIntOrNull() ?: 0,
+                tlsEnabled = settingsStore.relayTlsEnabled.firstOrNull() ?: false,
+                psk = settingsStore.relayPsk.firstOrNull() ?: "",
+                authEnabled = settingsStore.relayAuthEnabled.firstOrNull() ?: false,
+                username = settingsStore.relayUsername.firstOrNull() ?: "",
+                password = settingsStore.relayPassword.firstOrNull() ?: "",
+            )
 
             if (p2pSecret.isBlank()) {
                 Toast.makeText(this@MainActivity, getString(R.string.p2p_secret_required), Toast.LENGTH_LONG).show()
@@ -126,6 +141,19 @@ class MainActivity : ComponentActivity() {
             val cidrValidation = CidrValidator.validateCidrs(routeCidrs)
             if (cidrValidation is CidrValidationResult.Invalid) {
                 Toast.makeText(this@MainActivity, getString(R.string.cidr_validation_failed, cidrValidation.error), Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            val relayError = validateRelayConfig(relayConfig)
+            if (relayError != null) {
+                val message = when (relayError) {
+                    RelayConfigError.HOST_REQUIRED -> R.string.relay_host_required
+                    RelayConfigError.HOST_INVALID -> R.string.relay_host_invalid
+                    RelayConfigError.PORT_INVALID -> R.string.relay_port_invalid
+                    RelayConfigError.PSK_REQUIRED -> R.string.relay_psk_required
+                    RelayConfigError.CREDENTIALS_REQUIRED -> R.string.relay_credentials_required
+                }
+                Toast.makeText(this@MainActivity, getString(message), Toast.LENGTH_LONG).show()
                 return@launch
             }
 
@@ -145,6 +173,15 @@ class MainActivity : ComponentActivity() {
                 putExtra(GoncToolVpnService.EXTRA_EXPERT_MODE_RAW_ARGS, expertModeRawArgs)
                 putExtra(GoncToolVpnService.EXTRA_KCP_ENABLED, kcpEnabled)
                 putExtra(GoncToolVpnService.EXTRA_AUTO_P2P_LAN, autoP2pLan)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_ENABLED, relayConfig.enabled)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_MODE, relayConfig.mode.value)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_HOST, relayConfig.host)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_PORT, relayConfig.port)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_TLS_ENABLED, relayConfig.tlsEnabled)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_PSK, relayConfig.psk)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_AUTH_ENABLED, relayConfig.authEnabled)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_USERNAME, relayConfig.username)
+                putExtra(GoncToolVpnService.EXTRA_RELAY_PASSWORD, relayConfig.password)
             }
             try {
                 startForegroundService(intent)

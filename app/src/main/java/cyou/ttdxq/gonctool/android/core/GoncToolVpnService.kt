@@ -28,6 +28,9 @@ import cyou.ttdxq.gonctool.android.util.formatElapsedDuration
 import cyou.ttdxq.gonctool.android.util.formatTrafficBytes
 import cyou.ttdxq.gonctool.android.util.formatTrafficRate
 import cyou.ttdxq.gonctool.android.util.normalizeIpAddressInput
+import cyou.ttdxq.gonctool.android.util.RelayConfig
+import cyou.ttdxq.gonctool.android.util.RelayMode
+import cyou.ttdxq.gonctool.android.util.buildRelayExtraArgs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,6 +59,15 @@ class GoncToolVpnService : VpnService() {
         const val EXTRA_EXPERT_MODE_RAW_ARGS = "expert_mode_raw_args"
         const val EXTRA_KCP_ENABLED = "kcp_enabled"
         const val EXTRA_AUTO_P2P_LAN = "auto_p2p_lan"
+        const val EXTRA_RELAY_ENABLED = "relay_enabled"
+        const val EXTRA_RELAY_MODE = "relay_mode"
+        const val EXTRA_RELAY_HOST = "relay_host"
+        const val EXTRA_RELAY_PORT = "relay_port"
+        const val EXTRA_RELAY_TLS_ENABLED = "relay_tls_enabled"
+        const val EXTRA_RELAY_PSK = "relay_psk"
+        const val EXTRA_RELAY_AUTH_ENABLED = "relay_auth_enabled"
+        const val EXTRA_RELAY_USERNAME = "relay_username"
+        const val EXTRA_RELAY_PASSWORD = "relay_password"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "gonctool_vpn_channel"
         private const val TAG = "GoncToolVpnService"
@@ -240,7 +252,34 @@ class GoncToolVpnService : VpnService() {
                 val expertModeRawArgs = intent.getStringExtra(EXTRA_EXPERT_MODE_RAW_ARGS) ?: ""
                 val kcpEnabled = intent.getBooleanExtra(EXTRA_KCP_ENABLED, false)
                 val autoP2pLan = intent.getBooleanExtra(EXTRA_AUTO_P2P_LAN, true)
-                startVpn(secret, cidrs, splitTunnelMode, splitTunnelApps, useCustomDns, customDnsAddress, dnsThroughTunnel, linkGoncDns, customStunServers, customMqttServers, expertModeEnabled, expertModeRawArgs, kcpEnabled, autoP2pLan)
+                val relayConfig = RelayConfig(
+                    enabled = intent.getBooleanExtra(EXTRA_RELAY_ENABLED, false),
+                    mode = RelayMode.fromValue(intent.getStringExtra(EXTRA_RELAY_MODE).orEmpty()),
+                    host = intent.getStringExtra(EXTRA_RELAY_HOST).orEmpty(),
+                    port = intent.getIntExtra(EXTRA_RELAY_PORT, 1080),
+                    tlsEnabled = intent.getBooleanExtra(EXTRA_RELAY_TLS_ENABLED, false),
+                    psk = intent.getStringExtra(EXTRA_RELAY_PSK).orEmpty(),
+                    authEnabled = intent.getBooleanExtra(EXTRA_RELAY_AUTH_ENABLED, false),
+                    username = intent.getStringExtra(EXTRA_RELAY_USERNAME).orEmpty(),
+                    password = intent.getStringExtra(EXTRA_RELAY_PASSWORD).orEmpty(),
+                )
+                startVpn(
+                    secret,
+                    cidrs,
+                    splitTunnelMode,
+                    splitTunnelApps,
+                    useCustomDns,
+                    customDnsAddress,
+                    dnsThroughTunnel,
+                    linkGoncDns,
+                    customStunServers,
+                    customMqttServers,
+                    expertModeEnabled,
+                    expertModeRawArgs,
+                    kcpEnabled,
+                    autoP2pLan,
+                    relayConfig,
+                )
             }
             ACTION_STOP -> stopVpn()
             else -> {
@@ -266,6 +305,7 @@ class GoncToolVpnService : VpnService() {
         expertModeRawArgs: String,
         kcpEnabled: Boolean,
         autoP2pLan: Boolean,
+        relayConfig: RelayConfig,
     ) {
         if (secret.isBlank()) {
             VpnState.setError("P2P Secret不能为空")
@@ -338,6 +378,10 @@ class GoncToolVpnService : VpnService() {
                         append('"')
                         append(normalizedMqttServers)
                         append('"')
+                    }
+                    if (relayConfig.enabled) {
+                        if (isNotEmpty()) append(' ')
+                        append(buildRelayExtraArgs(relayConfig))
                     }
                     if (expertModeEnabled && expertModeRawArgs.isNotBlank()) {
                         if (isNotEmpty()) append(' ')

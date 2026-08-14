@@ -28,6 +28,15 @@ class SettingsStore(private val context: Context) {
         val KEY_EXPERT_MODE_RAW_ARGS = stringPreferencesKey("expert_mode_raw_args")
         val KEY_KCP_ENABLED = booleanPreferencesKey("kcp_enabled")
         val KEY_AUTO_P2P_LAN = booleanPreferencesKey("auto_p2p_lan")
+        val KEY_RELAY_ENABLED = booleanPreferencesKey("relay_enabled")
+        val KEY_RELAY_MODE = stringPreferencesKey("relay_mode")
+        val KEY_RELAY_HOST = stringPreferencesKey("relay_host")
+        val KEY_RELAY_PORT = stringPreferencesKey("relay_port")
+        val KEY_RELAY_TLS_ENABLED = booleanPreferencesKey("relay_tls_enabled")
+        val KEY_RELAY_PSK = stringPreferencesKey("relay_psk")
+        val KEY_RELAY_AUTH_ENABLED = booleanPreferencesKey("relay_auth_enabled")
+        val KEY_RELAY_USERNAME = stringPreferencesKey("relay_username")
+        val KEY_RELAY_PASSWORD = stringPreferencesKey("relay_password")
     }
 
     val p2pSecret: Flow<String> = context.dataStore.data
@@ -73,6 +82,33 @@ class SettingsStore(private val context: Context) {
 
     val autoP2pLan: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[KEY_AUTO_P2P_LAN] ?: true }
+
+    val relayEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_ENABLED] ?: false }
+
+    val relayMode: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_MODE] ?: "fallback" }
+
+    val relayHost: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_HOST] ?: "" }
+
+    val relayPort: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_PORT] ?: "1080" }
+
+    val relayTlsEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_TLS_ENABLED] ?: false }
+
+    val relayPsk: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_PSK] ?: "" }
+
+    val relayAuthEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_AUTH_ENABLED] ?: false }
+
+    val relayUsername: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_USERNAME] ?: "" }
+
+    val relayPassword: Flow<String> = context.dataStore.data
+        .map { preferences -> preferences[KEY_RELAY_PASSWORD] ?: "" }
 
     suspend fun setP2pSecret(secret: String) {
         context.dataStore.edit { preferences ->
@@ -156,5 +192,41 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences[KEY_AUTO_P2P_LAN] = enabled
         }
+    }
+
+    suspend fun setRelayEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_RELAY_ENABLED] = enabled }
+    }
+
+    suspend fun setRelayMode(mode: String) {
+        context.dataStore.edit { it[KEY_RELAY_MODE] = mode }
+    }
+
+    suspend fun setRelayHost(host: String) {
+        context.dataStore.edit { it[KEY_RELAY_HOST] = host }
+    }
+
+    suspend fun setRelayPort(port: String) {
+        context.dataStore.edit { it[KEY_RELAY_PORT] = port }
+    }
+
+    suspend fun setRelayTlsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_RELAY_TLS_ENABLED] = enabled }
+    }
+
+    suspend fun setRelayPsk(psk: String) {
+        context.dataStore.edit { it[KEY_RELAY_PSK] = psk }
+    }
+
+    suspend fun setRelayAuthEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_RELAY_AUTH_ENABLED] = enabled }
+    }
+
+    suspend fun setRelayUsername(username: String) {
+        context.dataStore.edit { it[KEY_RELAY_USERNAME] = username }
+    }
+
+    suspend fun setRelayPassword(password: String) {
+        context.dataStore.edit { it[KEY_RELAY_PASSWORD] = password }
     }
 }
