@@ -6,14 +6,15 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,13 +30,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -53,109 +57,185 @@ import cyou.ttdxq.gonctool.android.util.RelayMode
 import cyou.ttdxq.gonctool.android.util.isValidIpAddressInput
 import cyou.ttdxq.gonctool.android.util.validateRelayConfig
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+
+private const val SETTINGS_ENTER_ANIMATION_MS = 180
+private const val SETTINGS_EXIT_ANIMATION_MS = 120
+private const val RELAY_PERSIST_DELAY_MS = 220L
+
+private class PendingJob {
+    var value: Job? = null
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     settingsStore: SettingsStore,
+    persistenceScope: CoroutineScope,
     onMenuClick: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val useCustomDns by settingsStore.useCustomDns.collectAsState(initial = false)
-    val customDnsAddress by settingsStore.customDnsAddress.collectAsState(initial = "")
-    val dnsThroughTunnel by settingsStore.dnsThroughTunnel.collectAsState(initial = true)
-    val linkGoncDns by settingsStore.linkGoncDns.collectAsState(initial = false)
-    val customStunServers by settingsStore.customStunServers.collectAsState(initial = "")
-    val customMqttServers by settingsStore.customMqttServers.collectAsState(initial = "")
-    val expertModeEnabled by settingsStore.expertModeEnabled.collectAsState(initial = false)
-    val expertModeRawArgs by settingsStore.expertModeRawArgs.collectAsState(initial = "")
-    val kcpEnabled by settingsStore.kcpEnabled.collectAsState(initial = false)
-    val autoP2pLan by settingsStore.autoP2pLan.collectAsState(initial = true)
-    val relayEnabled by settingsStore.relayEnabled.collectAsState(initial = false)
+    val persistedUseCustomDns by settingsStore.useCustomDns.collectAsState(initial = false)
+    val customDnsAddress by settingsStore.customDnsAddress.collectAsState(initial = null)
+    val persistedDnsThroughTunnel by settingsStore.dnsThroughTunnel.collectAsState(initial = true)
+    val persistedLinkGoncDns by settingsStore.linkGoncDns.collectAsState(initial = false)
+    val customStunServers by settingsStore.customStunServers.collectAsState(initial = null)
+    val customMqttServers by settingsStore.customMqttServers.collectAsState(initial = null)
+    val persistedExpertModeEnabled by settingsStore.expertModeEnabled.collectAsState(initial = false)
+    val expertModeRawArgs by settingsStore.expertModeRawArgs.collectAsState(initial = null)
+    val persistedKcpEnabled by settingsStore.kcpEnabled.collectAsState(initial = false)
+    val persistedAutoP2pLan by settingsStore.autoP2pLan.collectAsState(initial = true)
+    val persistedRelayEnabled by settingsStore.relayEnabled.collectAsState(initial = false)
     val relayModeValue by settingsStore.relayMode.collectAsState(initial = RelayMode.FALLBACK.value)
-    val relayHost by settingsStore.relayHost.collectAsState(initial = "")
-    val relayPort by settingsStore.relayPort.collectAsState(initial = "1080")
-    val relayTlsEnabled by settingsStore.relayTlsEnabled.collectAsState(initial = false)
-    val relayPsk by settingsStore.relayPsk.collectAsState(initial = "")
-    val relayAuthEnabled by settingsStore.relayAuthEnabled.collectAsState(initial = false)
-    val relayUsername by settingsStore.relayUsername.collectAsState(initial = "")
-    val relayPassword by settingsStore.relayPassword.collectAsState(initial = "")
-    var showExpertModeDialog by remember { mutableStateOf(false) }
+    val relayHost by settingsStore.relayHost.collectAsState(initial = null)
+    val relayPort by settingsStore.relayPort.collectAsState(initial = null)
+    val persistedRelayTlsEnabled by settingsStore.relayTlsEnabled.collectAsState(initial = false)
+    val relayPsk by settingsStore.relayPsk.collectAsState(initial = null)
+    val persistedRelayAuthEnabled by settingsStore.relayAuthEnabled.collectAsState(initial = false)
+    val relayUsername by settingsStore.relayUsername.collectAsState(initial = null)
+    val relayPassword by settingsStore.relayPassword.collectAsState(initial = null)
+    var showExpertModeDialog by rememberSaveable { mutableStateOf(false) }
 
-    var dnsInput by remember { mutableStateOf(customDnsAddress) }
-    var stunInput by remember { mutableStateOf(customStunServers) }
-    var mqttInput by remember { mutableStateOf(customMqttServers) }
-    var expertArgsInput by remember { mutableStateOf(expertModeRawArgs) }
-    var relayHostInput by remember { mutableStateOf(relayHost) }
-    var relayPortInput by remember { mutableStateOf(relayPort) }
-    var relayPskInput by remember { mutableStateOf(relayPsk) }
-    var relayUsernameInput by remember { mutableStateOf(relayUsername) }
-    var relayPasswordInput by remember { mutableStateOf(relayPassword) }
-    var relayPskVisible by remember { mutableStateOf(false) }
-    var relayPasswordVisible by remember { mutableStateOf(false) }
+    var useCustomDns by remember(persistedUseCustomDns) { mutableStateOf(persistedUseCustomDns) }
+    var dnsThroughTunnel by remember(persistedDnsThroughTunnel) { mutableStateOf(persistedDnsThroughTunnel) }
+    var linkGoncDns by remember(persistedLinkGoncDns) { mutableStateOf(persistedLinkGoncDns) }
+    var expertModeEnabled by remember(persistedExpertModeEnabled) { mutableStateOf(persistedExpertModeEnabled) }
+    var kcpEnabled by remember(persistedKcpEnabled) { mutableStateOf(persistedKcpEnabled) }
+    var autoP2pLan by remember(persistedAutoP2pLan) { mutableStateOf(persistedAutoP2pLan) }
+    var relayEnabled by remember(persistedRelayEnabled) { mutableStateOf(persistedRelayEnabled) }
+    var relayDetailsVisible by remember { mutableStateOf(relayEnabled) }
+    val relayPersistenceJob = remember { PendingJob() }
+    var relayTlsEnabled by remember(persistedRelayTlsEnabled) { mutableStateOf(persistedRelayTlsEnabled) }
+    var relayAuthEnabled by remember(persistedRelayAuthEnabled) { mutableStateOf(persistedRelayAuthEnabled) }
+
+    var inputsInitialized by rememberSaveable { mutableStateOf(false) }
+    var dnsInput by rememberSaveable { mutableStateOf("") }
+    var stunInput by rememberSaveable { mutableStateOf("") }
+    var mqttInput by rememberSaveable { mutableStateOf("") }
+    var expertArgsInput by rememberSaveable { mutableStateOf("") }
+    var relayHostInput by rememberSaveable { mutableStateOf("") }
+    var relayPortInput by rememberSaveable { mutableStateOf("1080") }
+    var relayPskInput by rememberSaveable { mutableStateOf("") }
+    var relayUsernameInput by rememberSaveable { mutableStateOf("") }
+    var relayPasswordInput by rememberSaveable { mutableStateOf("") }
+    var relayPskVisible by rememberSaveable { mutableStateOf(false) }
+    var relayPasswordVisible by rememberSaveable { mutableStateOf(false) }
     var isDnsInputInvalid by remember { mutableStateOf(false) }
 
-    LaunchedEffect(customDnsAddress) { dnsInput = customDnsAddress }
-    LaunchedEffect(customStunServers) { stunInput = customStunServers }
-    LaunchedEffect(customMqttServers) { mqttInput = customMqttServers }
-    LaunchedEffect(expertModeRawArgs) { expertArgsInput = expertModeRawArgs }
-    LaunchedEffect(relayHost) { relayHostInput = relayHost }
-    LaunchedEffect(relayPort) { relayPortInput = relayPort }
-    LaunchedEffect(relayPsk) { relayPskInput = relayPsk }
-    LaunchedEffect(relayUsername) { relayUsernameInput = relayUsername }
-    LaunchedEffect(relayPassword) { relayPasswordInput = relayPassword }
+    LaunchedEffect(
+        customDnsAddress,
+        customStunServers,
+        customMqttServers,
+        expertModeRawArgs,
+        relayHost,
+        relayPort,
+        relayPsk,
+        relayUsername,
+        relayPassword,
+    ) {
+        if (!inputsInitialized &&
+            customDnsAddress != null &&
+            customStunServers != null &&
+            customMqttServers != null &&
+            expertModeRawArgs != null &&
+            relayHost != null &&
+            relayPort != null &&
+            relayPsk != null &&
+            relayUsername != null &&
+            relayPassword != null
+        ) {
+            dnsInput = customDnsAddress.orEmpty()
+            stunInput = customStunServers.orEmpty()
+            mqttInput = customMqttServers.orEmpty()
+            expertArgsInput = expertModeRawArgs.orEmpty()
+            relayHostInput = relayHost.orEmpty()
+            relayPortInput = relayPort ?: "1080"
+            relayPskInput = relayPsk.orEmpty()
+            relayUsernameInput = relayUsername.orEmpty()
+            relayPasswordInput = relayPassword.orEmpty()
+            inputsInitialized = true
+        }
+    }
+
+    val flushPendingInputs = rememberUpdatedState {
+        if (inputsInitialized) {
+            relayPersistenceJob.value?.cancel()
+            persistenceScope.launch {
+                if (relayEnabled != persistedRelayEnabled) settingsStore.setRelayEnabled(relayEnabled)
+                if (dnsInput != customDnsAddress) settingsStore.setCustomDnsAddress(dnsInput)
+                if (stunInput != customStunServers) settingsStore.setCustomStunServers(stunInput)
+                if (mqttInput != customMqttServers) settingsStore.setCustomMqttServers(mqttInput)
+                if (expertArgsInput != expertModeRawArgs) settingsStore.setExpertModeRawArgs(expertArgsInput)
+                if (relayHostInput != relayHost) settingsStore.setRelayHost(relayHostInput)
+                if (relayPortInput != relayPort) settingsStore.setRelayPort(relayPortInput)
+                if (relayPskInput != relayPsk) settingsStore.setRelayPsk(relayPskInput)
+                if (relayUsernameInput != relayUsername) settingsStore.setRelayUsername(relayUsernameInput)
+                if (relayPasswordInput != relayPassword) settingsStore.setRelayPassword(relayPasswordInput)
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { flushPendingInputs.value() }
+    }
+
+    LaunchedEffect(relayEnabled) {
+        if (relayEnabled) {
+            repeat(2) { withFrameNanos { } }
+        }
+        relayDetailsVisible = relayEnabled
+    }
 
     LaunchedEffect(dnsInput, customDnsAddress) {
-        if (dnsInput != customDnsAddress) {
+        if (inputsInitialized && dnsInput != customDnsAddress) {
             delay(400)
             settingsStore.setCustomDnsAddress(dnsInput)
         }
     }
     LaunchedEffect(stunInput, customStunServers) {
-        if (stunInput != customStunServers) {
+        if (inputsInitialized && stunInput != customStunServers) {
             delay(400)
             settingsStore.setCustomStunServers(stunInput)
         }
     }
     LaunchedEffect(mqttInput, customMqttServers) {
-        if (mqttInput != customMqttServers) {
+        if (inputsInitialized && mqttInput != customMqttServers) {
             delay(400)
             settingsStore.setCustomMqttServers(mqttInput)
         }
     }
     LaunchedEffect(expertArgsInput, expertModeRawArgs) {
-        if (expertArgsInput != expertModeRawArgs) {
+        if (inputsInitialized && expertArgsInput != expertModeRawArgs) {
             delay(400)
             settingsStore.setExpertModeRawArgs(expertArgsInput)
         }
     }
     LaunchedEffect(relayHostInput, relayHost) {
-        if (relayHostInput != relayHost) {
+        if (inputsInitialized && relayHostInput != relayHost) {
             delay(400)
             settingsStore.setRelayHost(relayHostInput)
         }
     }
     LaunchedEffect(relayPortInput, relayPort) {
-        if (relayPortInput != relayPort) {
+        if (inputsInitialized && relayPortInput != relayPort) {
             delay(400)
             settingsStore.setRelayPort(relayPortInput)
         }
     }
     LaunchedEffect(relayPskInput, relayPsk) {
-        if (relayPskInput != relayPsk) {
+        if (inputsInitialized && relayPskInput != relayPsk) {
             delay(400)
             settingsStore.setRelayPsk(relayPskInput)
         }
     }
     LaunchedEffect(relayUsernameInput, relayUsername) {
-        if (relayUsernameInput != relayUsername) {
+        if (inputsInitialized && relayUsernameInput != relayUsername) {
             delay(400)
             settingsStore.setRelayUsername(relayUsernameInput)
         }
     }
     LaunchedEffect(relayPasswordInput, relayPassword) {
-        if (relayPasswordInput != relayPassword) {
+        if (inputsInitialized && relayPasswordInput != relayPassword) {
             delay(400)
             settingsStore.setRelayPassword(relayPasswordInput)
         }
@@ -163,7 +243,7 @@ fun SettingsScreen(
 
     val canBypassDns = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     LaunchedEffect(useCustomDns, dnsInput, customDnsAddress) {
-        if (dnsInput != customDnsAddress) {
+        if (inputsInitialized && dnsInput != customDnsAddress) {
             delay(300)
         }
         isDnsInputInvalid = useCustomDns && !isValidIpAddressInput(dnsInput)
@@ -200,16 +280,15 @@ fun SettingsScreen(
             )
         }
     ) { innerPadding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(innerPadding),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 📦 传输协议
-            Card(
+            item {
+                Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -242,7 +321,8 @@ fun SettingsScreen(
                         Switch(
                             checked = kcpEnabled,
                             onCheckedChange = { enabled ->
-                                scope.launch { settingsStore.setKcpEnabled(enabled) }
+                                kcpEnabled = enabled
+                                persistenceScope.launch { settingsStore.setKcpEnabled(enabled) }
                             }
                         )
                     }
@@ -262,14 +342,17 @@ fun SettingsScreen(
                         Switch(
                             checked = autoP2pLan,
                             onCheckedChange = { enabled ->
-                                scope.launch { settingsStore.setAutoP2pLan(enabled) }
+                                autoP2pLan = enabled
+                                persistenceScope.launch { settingsStore.setAutoP2pLan(enabled) }
                             }
                         )
                     }
                 }
+                }
             }
 
-            Card(
+            item {
+                Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -302,15 +385,26 @@ fun SettingsScreen(
                         Switch(
                             checked = relayEnabled,
                             onCheckedChange = { enabled ->
-                                scope.launch { settingsStore.setRelayEnabled(enabled) }
+                                relayEnabled = enabled
+                                relayPersistenceJob.value?.cancel()
+                                relayPersistenceJob.value = persistenceScope.launch {
+                                    delay(RELAY_PERSIST_DELAY_MS)
+                                    settingsStore.setRelayEnabled(enabled)
+                                }
                             }
                         )
                     }
 
                     AnimatedVisibility(
-                        visible = relayEnabled,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut()
+                        visible = relayDetailsVisible,
+                        enter = expandVertically(
+                            animationSpec = tween(SETTINGS_ENTER_ANIMATION_MS),
+                            expandFrom = Alignment.Top,
+                        ) + fadeIn(tween(SETTINGS_ENTER_ANIMATION_MS)),
+                        exit = shrinkVertically(
+                            animationSpec = tween(SETTINGS_EXIT_ANIMATION_MS),
+                            shrinkTowards = Alignment.Top,
+                        ) + fadeOut(tween(SETTINGS_EXIT_ANIMATION_MS)),
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             Text(
@@ -323,7 +417,7 @@ fun SettingsScreen(
                                     SegmentedButton(
                                         selected = relayMode == mode,
                                         onClick = {
-                                            scope.launch { settingsStore.setRelayMode(mode.value) }
+                                            persistenceScope.launch { settingsStore.setRelayMode(mode.value) }
                                         },
                                         shape = SegmentedButtonDefaults.itemShape(index, modes.size),
                                         label = {
@@ -405,11 +499,16 @@ fun SettingsScreen(
                                 Switch(
                                     checked = relayTlsEnabled,
                                     onCheckedChange = { enabled ->
-                                        scope.launch { settingsStore.setRelayTlsEnabled(enabled) }
+                                        relayTlsEnabled = enabled
+                                        persistenceScope.launch { settingsStore.setRelayTlsEnabled(enabled) }
                                     }
                                 )
                             }
-                            AnimatedVisibility(visible = relayTlsEnabled) {
+                            AnimatedVisibility(
+                                visible = relayTlsEnabled,
+                                enter = fadeIn(tween(SETTINGS_ENTER_ANIMATION_MS)),
+                                exit = fadeOut(tween(SETTINGS_EXIT_ANIMATION_MS)),
+                            ) {
                                 RelaySecretField(
                                     value = relayPskInput,
                                     onValueChange = { relayPskInput = it },
@@ -440,11 +539,16 @@ fun SettingsScreen(
                                 Switch(
                                     checked = relayAuthEnabled,
                                     onCheckedChange = { enabled ->
-                                        scope.launch { settingsStore.setRelayAuthEnabled(enabled) }
+                                        relayAuthEnabled = enabled
+                                        persistenceScope.launch { settingsStore.setRelayAuthEnabled(enabled) }
                                     }
                                 )
                             }
-                            AnimatedVisibility(visible = relayAuthEnabled) {
+                            AnimatedVisibility(
+                                visible = relayAuthEnabled,
+                                enter = fadeIn(tween(SETTINGS_ENTER_ANIMATION_MS)),
+                                exit = fadeOut(tween(SETTINGS_EXIT_ANIMATION_MS)),
+                            ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = relayUsernameInput,
@@ -474,10 +578,11 @@ fun SettingsScreen(
                         }
                     }
                 }
+                }
             }
 
-            // 🌐 网络设置
-            Card(
+            item {
+                Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -503,7 +608,8 @@ fun SettingsScreen(
                         Switch(
                             checked = useCustomDns,
                             onCheckedChange = { enabled ->
-                                scope.launch { settingsStore.setUseCustomDns(enabled) }
+                                useCustomDns = enabled
+                                persistenceScope.launch { settingsStore.setUseCustomDns(enabled) }
                             }
                         )
                     }
@@ -541,7 +647,8 @@ fun SettingsScreen(
                         Switch(
                             checked = dnsThroughTunnel,
                             onCheckedChange = { enabled ->
-                                scope.launch {
+                                dnsThroughTunnel = if (canBypassDns) enabled else true
+                                persistenceScope.launch {
                                     settingsStore.setDnsThroughTunnel(if (canBypassDns) enabled else true)
                                 }
                             },
@@ -565,16 +672,18 @@ fun SettingsScreen(
                         Switch(
                             checked = linkGoncDns,
                             onCheckedChange = { enabled ->
-                                scope.launch { settingsStore.setLinkGoncDns(enabled) }
+                                linkGoncDns = enabled
+                                persistenceScope.launch { settingsStore.setLinkGoncDns(enabled) }
                             },
                             enabled = useCustomDns
                         )
                     }
                 }
+                }
             }
 
-            // 📡 P2P 辅助服务器
-            Card(
+            item {
+                Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -613,10 +722,11 @@ fun SettingsScreen(
                         minLines = 2,
                     )
                 }
+                }
             }
 
-            // ⚙️ 专家模式
-            Card(
+            item {
+                Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -645,7 +755,8 @@ fun SettingsScreen(
                                 if (enabled) {
                                     showExpertModeDialog = true
                                 } else {
-                                    scope.launch { settingsStore.setExpertModeEnabled(false) }
+                                    expertModeEnabled = false
+                                    persistenceScope.launch { settingsStore.setExpertModeEnabled(false) }
                                 }
                             }
                         )
@@ -653,8 +764,8 @@ fun SettingsScreen(
 
                     AnimatedVisibility(
                         visible = expertModeEnabled,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut()
+                        enter = fadeIn(tween(SETTINGS_ENTER_ANIMATION_MS)),
+                        exit = fadeOut(tween(SETTINGS_EXIT_ANIMATION_MS))
                     ) {
                         OutlinedTextField(
                             value = expertArgsInput,
@@ -668,17 +779,20 @@ fun SettingsScreen(
                         )
                     }
                 }
+                }
             }
+        }
 
-            if (showExpertModeDialog) {
-                AlertDialog(
+        if (showExpertModeDialog) {
+            AlertDialog(
                     onDismissRequest = { showExpertModeDialog = false },
                     title = { Text(stringResource(R.string.expert_mode_dialog_title)) },
                     text = { Text(stringResource(R.string.expert_mode_dialog_message)) },
                     confirmButton = {
                         TextButton(onClick = {
                             showExpertModeDialog = false
-                            scope.launch { settingsStore.setExpertModeEnabled(true) }
+                            expertModeEnabled = true
+                            persistenceScope.launch { settingsStore.setExpertModeEnabled(true) }
                         }) {
                             Text(stringResource(R.string.expert_mode_dialog_confirm))
                         }
@@ -688,8 +802,7 @@ fun SettingsScreen(
                             Text(stringResource(R.string.expert_mode_dialog_cancel))
                         }
                     }
-                )
-            }
+            )
         }
     }
 }

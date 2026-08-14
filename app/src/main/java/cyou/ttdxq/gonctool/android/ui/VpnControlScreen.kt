@@ -34,14 +34,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -107,16 +110,21 @@ fun StatusCard(status: VpnStatus, errorMessage: String?, traffic: VpnTraffic?) {
     )
 
     val isPulsing = status == VpnStatus.CONNECTING || status == VpnStatus.STOPPING
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 600),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseAlpha"
-    )
+    val pulseAlpha = if (isPulsing) {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        val animatedAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.6f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 600),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseAlpha"
+        )
+        animatedAlpha
+    } else {
+        1f
+    }
 
     val icon = when (status) {
         VpnStatus.DISCONNECTED -> "⚪"
@@ -150,7 +158,7 @@ fun StatusCard(status: VpnStatus, errorMessage: String?, traffic: VpnTraffic?) {
                 style = MaterialTheme.typography.headlineLarge,
                 color = animatedStatusColor,
                 modifier = Modifier.graphicsLayer {
-                    alpha = if (isPulsing) pulseAlpha else 1f
+                    alpha = pulseAlpha
                 }
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -231,32 +239,50 @@ fun StatusCard(status: VpnStatus, errorMessage: String?, traffic: VpnTraffic?) {
 @Composable
 fun VpnControlScreen(
     settingsStore: SettingsStore,
+    persistenceScope: CoroutineScope,
     onStartVpn: () -> Unit,
     onStopVpn: () -> Unit,
     onMenuClick: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val p2pSecret by settingsStore.p2pSecret.collectAsState(initial = "")
-    val routeCidrs by settingsStore.routeCidrs.collectAsState(initial = "")
+    val p2pSecret by settingsStore.p2pSecret.collectAsState(initial = null)
+    val routeCidrs by settingsStore.routeCidrs.collectAsState(initial = null)
     val vpnStatus by VpnState.status.collectAsState()
     val errorMessage by VpnState.errorMessage.collectAsState()
     val traffic by VpnState.traffic.collectAsState()
 
-    var secretInput by remember { mutableStateOf(p2pSecret) }
-    var cidrsInput by remember { mutableStateOf(routeCidrs) }
+    var inputsInitialized by rememberSaveable { mutableStateOf(false) }
+    var secretInput by rememberSaveable { mutableStateOf("") }
+    var cidrsInput by rememberSaveable { mutableStateOf("") }
     var cidrValidationError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(p2pSecret) { secretInput = p2pSecret }
-    LaunchedEffect(routeCidrs) { cidrsInput = routeCidrs }
+    LaunchedEffect(p2pSecret, routeCidrs) {
+        if (!inputsInitialized && p2pSecret != null && routeCidrs != null) {
+            secretInput = p2pSecret.orEmpty()
+            cidrsInput = routeCidrs.orEmpty()
+            inputsInitialized = true
+        }
+    }
+
+    val flushPendingInputs = rememberUpdatedState {
+        if (inputsInitialized) {
+            persistenceScope.launch {
+                if (secretInput != p2pSecret) settingsStore.setP2pSecret(secretInput)
+                if (cidrsInput != routeCidrs) settingsStore.setRouteCidrs(cidrsInput)
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { flushPendingInputs.value() }
+    }
 
     LaunchedEffect(secretInput, p2pSecret) {
-        if (secretInput != p2pSecret) {
+        if (inputsInitialized && secretInput != p2pSecret) {
             delay(500)
             settingsStore.setP2pSecret(secretInput)
         }
     }
     LaunchedEffect(cidrsInput, routeCidrs) {
-        if (cidrsInput != routeCidrs) {
+        if (inputsInitialized && cidrsInput != routeCidrs) {
             delay(300)
         }
         if (cidrsInput.isNotBlank()) {
@@ -267,7 +293,7 @@ fun VpnControlScreen(
         }
     }
     LaunchedEffect(cidrsInput, routeCidrs) {
-        if (cidrsInput != routeCidrs) {
+        if (inputsInitialized && cidrsInput != routeCidrs) {
             delay(300)
             settingsStore.setRouteCidrs(cidrsInput)
         }
@@ -327,7 +353,7 @@ fun VpnControlScreen(
                 OutlinedButton(
                     onClick = {
                         cidrsInput = CIDR_PRESET_GLOBAL
-                        scope.launch { settingsStore.setRouteCidrs(CIDR_PRESET_GLOBAL) }
+                        persistenceScope.launch { settingsStore.setRouteCidrs(CIDR_PRESET_GLOBAL) }
                     },
                     modifier = Modifier.weight(1f),
                     colors = if (activePreset == CidrPreset.GLOBAL) {
@@ -344,7 +370,7 @@ fun VpnControlScreen(
                 OutlinedButton(
                     onClick = {
                         cidrsInput = CIDR_PRESET_LAN
-                        scope.launch { settingsStore.setRouteCidrs(CIDR_PRESET_LAN) }
+                        persistenceScope.launch { settingsStore.setRouteCidrs(CIDR_PRESET_LAN) }
                     },
                     modifier = Modifier.weight(1f),
                     colors = if (activePreset == CidrPreset.LAN) {
@@ -361,7 +387,7 @@ fun VpnControlScreen(
                 OutlinedButton(
                     onClick = {
                         cidrsInput = ""
-                        scope.launch { settingsStore.setRouteCidrs("") }
+                        persistenceScope.launch { settingsStore.setRouteCidrs("") }
                     },
                     modifier = Modifier.weight(1f),
                     colors = if (activePreset == CidrPreset.CUSTOM) {

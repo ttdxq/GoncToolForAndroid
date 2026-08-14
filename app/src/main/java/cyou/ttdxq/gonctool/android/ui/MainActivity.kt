@@ -12,7 +12,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -20,17 +19,15 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.zIndex
 import cyou.ttdxq.gonctool.android.R
 import cyou.ttdxq.gonctool.android.core.GoncToolVpnService
 import cyou.ttdxq.gonctool.android.data.SettingsStore
@@ -87,6 +84,29 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             prepareVpn()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        preferHighestRefreshRate()
+    }
+
+    private fun preferHighestRefreshRate() {
+        val currentDisplay = display ?: return
+        val currentMode = currentDisplay.mode
+        val preferredMode = currentDisplay.supportedModes
+            .asSequence()
+            .filter { mode ->
+                mode.physicalWidth == currentMode.physicalWidth &&
+                    mode.physicalHeight == currentMode.physicalHeight
+            }
+            .maxByOrNull { mode -> mode.refreshRate }
+            ?: return
+
+        window.attributes = window.attributes.apply {
+            preferredDisplayModeId = preferredMode.modeId
+            preferredRefreshRate = preferredMode.refreshRate
         }
     }
 
@@ -207,24 +227,12 @@ private fun AppRoot(
     onStopVpn: () -> Unit,
 ) {
     var currentPage by rememberSaveable { mutableStateOf(MainPage.HOME.name) }
-    var prewarmedPages by remember { mutableStateOf(setOf(MainPage.HOME)) }
     val isSubPage = currentPage != MainPage.HOME.name
     val currentMainPage = MainPage.valueOf(currentPage)
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val pageStateHolder = rememberSaveableStateHolder()
     val splitTunnelMode by settingsStore.splitTunnelMode.collectAsState(initial = SplitTunnelMode.ALL.value)
-
-    LaunchedEffect(splitTunnelMode) {
-        val warmedPages = mutableSetOf(MainPage.HOME, MainPage.SETTINGS, MainPage.DIAGNOSTICS, MainPage.LOGS)
-        if (splitTunnelMode != SplitTunnelMode.ALL.value) {
-            warmedPages += MainPage.APP_SELECTOR
-        }
-        prewarmedPages = prewarmedPages + warmedPages
-    }
-
-    LaunchedEffect(currentMainPage) {
-        prewarmedPages = prewarmedPages + currentMainPage
-    }
 
     BackHandler(enabled = isSubPage || drawerState.isOpen) {
         if (drawerState.isOpen) {
@@ -235,9 +243,16 @@ private fun AppRoot(
     }
 
     val onNavigate: (MainPage) -> Unit = { targetPage ->
-        scope.launch {
-            drawerState.close()
+        if (targetPage == currentMainPage) {
+            scope.launch { drawerState.close() }
+        } else {
             currentPage = targetPage.name
+        }
+    }
+
+    LaunchedEffect(currentMainPage) {
+        if (drawerState.isOpen) {
+            drawerState.close()
         }
     }
 
@@ -254,68 +269,35 @@ private fun AppRoot(
             )
         }
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (MainPage.HOME in prewarmedPages) {
-                AppPageLayer(visible = currentMainPage == MainPage.HOME) {
-                    VpnControlScreen(
-                        settingsStore = settingsStore,
-                        onStartVpn = onStartVpn,
-                        onStopVpn = onStopVpn,
-                        onMenuClick = onMenuClick,
-                    )
-                }
-            }
+        pageStateHolder.SaveableStateProvider(currentMainPage.name) {
+            when (currentMainPage) {
+                MainPage.HOME -> VpnControlScreen(
+                    settingsStore = settingsStore,
+                    persistenceScope = scope,
+                    onStartVpn = onStartVpn,
+                    onStopVpn = onStopVpn,
+                    onMenuClick = onMenuClick,
+                )
 
-            if (MainPage.SETTINGS in prewarmedPages) {
-                AppPageLayer(visible = currentMainPage == MainPage.SETTINGS) {
-                    SettingsScreen(
-                        settingsStore = settingsStore,
-                        onMenuClick = onMenuClick,
-                    )
-                }
-            }
+                MainPage.SETTINGS -> SettingsScreen(
+                    settingsStore = settingsStore,
+                    persistenceScope = scope,
+                    onMenuClick = onMenuClick,
+                )
 
-            if (MainPage.APP_SELECTOR in prewarmedPages) {
-                AppPageLayer(visible = currentMainPage == MainPage.APP_SELECTOR) {
-                    AppSelectorScreen(
-                        settingsStore = settingsStore,
-                        onMenuClick = onMenuClick,
-                        shouldLoadApps = splitTunnelMode != SplitTunnelMode.ALL.value,
-                    )
-                }
-            }
+                MainPage.APP_SELECTOR -> AppSelectorScreen(
+                    settingsStore = settingsStore,
+                    onMenuClick = onMenuClick,
+                    shouldLoadApps = splitTunnelMode != SplitTunnelMode.ALL.value,
+                )
 
-            if (MainPage.LOGS in prewarmedPages) {
-                AppPageLayer(visible = currentMainPage == MainPage.LOGS) {
-                    LogsScreen(
-                        onMenuClick = onMenuClick,
-                    )
-                }
-            }
+                MainPage.DIAGNOSTICS -> NetworkDiagnosticsScreen(
+                    settingsStore = settingsStore,
+                    onMenuClick = onMenuClick,
+                )
 
-            if (MainPage.DIAGNOSTICS in prewarmedPages) {
-                AppPageLayer(visible = currentMainPage == MainPage.DIAGNOSTICS) {
-                    NetworkDiagnosticsScreen(
-                        settingsStore = settingsStore,
-                        onMenuClick = onMenuClick,
-                    )
-                }
+                MainPage.LOGS -> LogsScreen(onMenuClick = onMenuClick)
             }
         }
-    }
-}
-
-@Composable
-private fun AppPageLayer(
-    visible: Boolean,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .alpha(if (visible) 1f else 0f)
-            .zIndex(if (visible) 1f else 0f)
-    ) {
-        content()
     }
 }
