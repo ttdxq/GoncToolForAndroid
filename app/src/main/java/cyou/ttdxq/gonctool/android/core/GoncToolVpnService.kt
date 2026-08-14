@@ -79,6 +79,20 @@ class GoncToolVpnService : VpnService() {
                 .onFailure { LogRepository.error(TAG, "Error closing VPN interface", it) }
         }
     }
+
+    /**
+     * tun2socks owns and closes the fd passed through fd://. Give it a detached
+     * duplicate so the Android VpnService descriptor remains independently
+     * owned by this service and can be closed exactly once.
+     */
+    private fun duplicateTunFd(): Long? = synchronized(interfaceLock) {
+        val descriptor = vpnInterface ?: return@synchronized null
+        runCatching {
+            ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd().toLong()
+        }.onFailure {
+            LogRepository.error(TAG, "Unable to duplicate VPN interface fd", it)
+        }.getOrNull()
+    }
     
     // JNI Logger implementation
     private val goLogger = object : Logger {
@@ -469,10 +483,10 @@ class GoncToolVpnService : VpnService() {
                 closeVpnInterface()
                 return
             }
-            val fd = vpnInterface?.fd ?: throw IllegalStateException("VPN interface has no file descriptor")
+            val fd = duplicateTunFd() ?: throw IllegalStateException("VPN interface has no file descriptor")
             currentProxyEndpoint = proxyEndpoint
             val tunLogLevel = resolveTun2SocksLogLevel()
-            Gobridge.startTun2Socks(fd.toLong(), proxyEndpoint, "tun0", 1400L, tunLogLevel)
+            Gobridge.startTun2Socks(fd, proxyEndpoint, "tun0", 1400L, tunLogLevel)
             tunnelReady = true
             activateDnsAfterTunnelReadyIfNeeded()
             updateNotification("Connected")
@@ -528,14 +542,14 @@ class GoncToolVpnService : VpnService() {
     }
 
     private fun restartTun2Socks() {
-        val fd = vpnInterface?.fd ?: return
+        val fd = duplicateTunFd() ?: return
         val proxyEndpoint = currentProxyEndpoint.takeIf { it.isNotBlank() } ?: return
         try {
             Gobridge.stopTun2Socks()
         } catch (_: Exception) {
         }
         val tunLogLevel = resolveTun2SocksLogLevel()
-        Gobridge.startTun2Socks(fd.toLong(), proxyEndpoint, "tun0", 1400L, tunLogLevel)
+        Gobridge.startTun2Socks(fd, proxyEndpoint, "tun0", 1400L, tunLogLevel)
         LogRepository.info(TAG, "Tun2Socks started with log level: $tunLogLevel")
     }
 
@@ -565,14 +579,16 @@ class GoncToolVpnService : VpnService() {
             tunnelReady = false
             tunnelActivationInProgress = false
             VpnState.setStatus(VpnStatus.STOPPING)
-            closeVpnInterface()
             // When stopVpn() called stopSelf(), its IO cleanup is already in
             // progress. Repeating the native stop calls here can re-enter the
             // bridge and add several seconds to teardown.
             if (!stopInProgress) {
                 Gobridge.stopTun2Socks()
+                closeVpnInterface()
                 Gobridge.stopGonc()
                 goncThread?.join(500)
+            } else {
+                closeVpnInterface()
             }
             currentProxyEndpoint = ""
         } catch(_: Exception){}
